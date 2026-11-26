@@ -32,7 +32,7 @@ El front y el back hablan con **peticiones HTTP**. Cada petición tiene:
 | Parte | Ejemplo | Para qué sirve |
 | --- | --- | --- |
 | Método | `GET`, `POST`, `PUT`, `PATCH`, `DELETE` | Qué quieres hacer (leer, crear, cambiar…) |
-| Ruta | `/api/jerseys/mio` | Sobre qué recurso |
+| Ruta | `/api/jerseys/mios` | Sobre qué recurso |
 | Cabeceras | `Authorization: Bearer eyJ…` | Información extra (quién eres, formato…) |
 | Cuerpo | `{"email":"ana@x.com","password":"…"}` | Los datos que envías (en JSON) |
 
@@ -46,8 +46,8 @@ Y el backend responde con un **código de estado** y, normalmente, un JSON:
 | 400 Bad Request | Datos incorrectos | Falta una casilla, foto no válida |
 | 401 Unauthorized | No has iniciado sesión | Falta el token |
 | 403 Forbidden | Sesión iniciada pero no puedes | Un usuario pide el ranking; fase incorrecta |
-| 404 Not Found | No existe | No has subido jersey |
-| 409 Conflict | Choca con algo que ya existe | Ya has votado, ya has subido |
+| 404 Not Found | No existe | Un jersey que no existe |
+| 409 Conflict | Choca con algo que ya existe | Ya has votado, ya tienes 3 jerseys |
 | 429 Too Many Requests | Demasiadas peticiones seguidas | Muchos intentos de login desde la misma IP |
 
 **Todos los errores** tienen el mismo formato, así el front puede mostrar el mensaje directamente:
@@ -78,9 +78,11 @@ if (!respuesta.ok) {
 **Llamar a una ruta protegida** (hay que mandar el token en cada petición):
 
 ```js
-const r = await fetch("/api/jerseys/mio", {
+const r = await fetch("/api/jerseys/mios", {
   headers: { Authorization: "Bearer " + sessionStorage.getItem("token") },
 });
+const { maximo, activos, jerseys } = await r.json();
+// p. ej. "Te quedan 2 de 3" → maximo - activos. Los eliminados también vienen (estado ELIMINADO + motivo).
 ```
 
 **Subir la foto** (no es JSON: es un formulario con archivo):
@@ -355,3 +357,4 @@ Ejemplo: "los jerseys tienen un título".
 - **Fase `PREPARACION`:** nueva, para antes de que empiece la subida o mientras el admin no ha puesto fechas.
 - **Sistema de votación 3-2-1:** cada usuario da 3 puntos a un jersey, 2 a otro y 1 a otro (antes era 6-5-4-3-2-1). Desempate en el ranking: más votos de 3, luego de 2, luego de 1.
 - **Sin mínimo de participantes:** si hay menos de 3 jerseys ajenos, se reparten solo las puntuaciones más altas (con 2 jerseys: 3 y 2; con 1: solo el 3).
+- **Hasta 3 jerseys por persona** (antes, 1). Los eliminados por el admin no cuentan. `GET /api/jerseys/mio` pasa a ser `GET /api/jerseys/mios` y devuelve `{ maximo, activos, jerseys: [...] }` (lista vacía si no hay ninguno, ya no da 404). Si ya tienes 3: `409 LIMITE_DE_JERSEYS`. Migración `V3__tres_jerseys_por_usuario.sql`.

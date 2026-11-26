@@ -6,7 +6,7 @@ import org.springframework.http.HttpStatus;
  * Excepción de negocio. Al lanzarla desde cualquier servicio, ManejadorErrores la
  * convierte en una respuesta JSON { "codigo": ..., "mensaje": ... } con su código HTTP.
  *
- * Ejemplo:  throw ApiException.conflicto("YA_HAS_SUBIDO", "Ya tienes un jersey subido");
+ * Ejemplo:  throw ApiException.conflicto("YA_HAS_VOTADO", "Ya has votado");
  */
 public class ApiException extends RuntimeException {
 

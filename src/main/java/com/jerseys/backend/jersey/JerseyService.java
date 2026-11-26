@@ -10,6 +10,7 @@ import com.jerseys.backend.imagen.ProcesadorImagenes;
 import com.jerseys.backend.jersey.JerseyDtos.JerseyAdminResponse;
 import com.jerseys.backend.jersey.JerseyDtos.JerseyVotableResponse;
 import com.jerseys.backend.jersey.JerseyDtos.MiJerseyResponse;
+import com.jerseys.backend.jersey.JerseyDtos.MisJerseysResponse;
 import com.jerseys.backend.usuario.Usuario;
 import com.jerseys.backend.usuario.UsuarioRepository;
 import org.slf4j.Logger;
@@ -27,6 +28,9 @@ import java.util.UUID;
 
 @Service
 public class JerseyService {
+
+    /** Cuántos jerseys activos (no eliminados) puede tener cada usuario en el concurso. */
+    public static final int MAX_JERSEYS_POR_USUARIO = 3;
 
     private static final Logger log = LoggerFactory.getLogger(JerseyService.class);
 
@@ -55,8 +59,16 @@ public class JerseyService {
     @Transactional
     public MiJerseyResponse subir(Long usuarioId, MultipartFile foto) {
         fases.exigir("subir jerseys", Fase.SUBIDA);
-        if (jerseys.findFirstByUsuarioIdAndEstadoNot(usuarioId, EstadoJersey.ELIMINADO).isPresent()) {
-            throw ApiException.conflicto("YA_HAS_SUBIDO", "Ya tienes un jersey en el concurso");
+
+        // Bloqueamos la fila del usuario hasta el final de la transacción. Si sube dos fotos a la vez
+        // (doble clic, dos pestañas...), la segunda espera aquí a que termine la primera, y al contar
+        // ya ve el jersey nuevo. Sin esto, las dos contarían "2" y se colarían 4 jerseys.
+        Usuario usuario = usuarios.findByIdBloqueando(usuarioId)
+                .orElseThrow(() -> ApiException.noEncontrado("USUARIO_NO_ENCONTRADO", "Usuario no encontrado"));
+        // Los eliminados no cuentan: si el admin te retira uno, puedes subir otro
+        if (jerseys.countByUsuarioIdAndEstadoNot(usuarioId, EstadoJersey.ELIMINADO) >= MAX_JERSEYS_POR_USUARIO) {
+            throw ApiException.conflicto("LIMITE_DE_JERSEYS",
+                    "Ya tienes " + MAX_JERSEYS_POR_USUARIO + " jerseys en el concurso, que es el máximo");
         }
 
         byte[] jpg = procesador.procesar(foto);
@@ -65,22 +77,21 @@ public class JerseyService {
         almacen.guardar(nombre, jpg);
 
         try {
-            Usuario usuario = usuarios.getReferenceById(usuarioId);
             Jersey jersey = jerseys.saveAndFlush(new Jersey(usuario, nombre, reloj.instant()));
             return aMiJersey(jersey);
         } catch (RuntimeException e) {
-            // Si falla la BD (p. ej. doble clic: el índice único rechaza el segundo),
-            // borramos la foto que ya habíamos subido para no dejar basura en el FTP.
+            // Si falla la BD, borramos la foto que ya habíamos subido para no dejar basura en el FTP
             borrarSinFallar(nombre);
             throw e;
         }
     }
 
+    /** Todos los jerseys del usuario (también los eliminados, para que vea el motivo). */
     @Transactional(readOnly = true)
-    public MiJerseyResponse miJersey(Long usuarioId) {
-        return jerseys.findFirstByUsuarioIdOrderByFechaSubidaDesc(usuarioId)
-                .map(this::aMiJersey)
-                .orElseThrow(() -> ApiException.noEncontrado("SIN_JERSEY", "Todavía no has subido ningún jersey"));
+    public MisJerseysResponse misJerseys(Long usuarioId) {
+        List<Jersey> lista = jerseys.findByUsuarioIdOrderByFechaSubidaDesc(usuarioId);
+        int activos = (int) lista.stream().filter(j -> j.getEstado() != EstadoJersey.ELIMINADO).count();
+        return new MisJerseysResponse(MAX_JERSEYS_POR_USUARIO, activos, lista.stream().map(this::aMiJersey).toList());
     }
 
     /**
