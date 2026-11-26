@@ -21,7 +21,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/jerseys")
-@Tag(name = "Jerseys", description = "Subir tus jerseys (hasta 3) y ver los del concurso")
+@Tag(name = "Jerseys", description = "Subir tu jersey (uno por persona) y ver los del concurso")
 public class JerseyController {
 
     private final JerseyService jerseyService;
@@ -41,7 +41,7 @@ public class JerseyController {
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @ResponseStatus(HttpStatus.CREATED)
     @Operation(summary = "Sube un jersey: 'foto' (delante, obligatoria) y 'fotoTrasera' (detrás, opcional). "
-            + "Solo en fase SUBIDA, hasta 3 jerseys por persona; los eliminados no cuentan")
+            + "Solo en fase SUBIDA, un jersey por persona; si el admin te lo elimina, puedes subir otro")
     public MiJerseyResponse subir(@AuthenticationPrincipal UsuarioActual yo,
                                   @RequestPart("foto") MultipartFile foto,
                                   @RequestPart(value = "fotoTrasera", required = false) MultipartFile fotoTrasera) {
@@ -49,7 +49,8 @@ public class JerseyController {
     }
 
     @GetMapping("/mios")
-    @Operation(summary = "Tus jerseys y su estado, el más reciente primero (lista vacía si no has subido ninguno)")
+    @Operation(summary = "Tus jerseys, el más reciente primero: el activo (como mucho uno) y los que te haya "
+            + "eliminado el admin, con el motivo. Lista vacía si no has subido ninguno")
     public MisJerseysResponse mios(@AuthenticationPrincipal UsuarioActual yo) {
         return jerseyService.misJerseys(yo.id());
     }

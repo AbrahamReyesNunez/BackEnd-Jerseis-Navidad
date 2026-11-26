@@ -121,7 +121,7 @@ class FlujoCompletoTest {
         // Sin jerseys todavía: lista vacía (no 404)
         mvc.perform(get("/api/jerseys/mios").header("Authorization", "Bearer " + ana))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.maximo").value(3))
+                .andExpect(jsonPath("$.maximo").value(1))
                 .andExpect(jsonPath("$.activos").value(0))
                 .andExpect(jsonPath("$.jerseys").isEmpty());
 
@@ -153,25 +153,23 @@ class FlujoCompletoTest {
         mvc.perform(get("/api/jerseys/mios").header("Authorization", "Bearer " + admin))
                 .andExpect(jsonPath("$.activos").value(0));
         assertThat(archivosSubidos()).isEqualTo(archivosAntes);
-        // Beto sube los 3 que se permiten
-        long jerseyBeto1 = subirJersey(beto);
-        long jerseyBeto2 = subirJersey(beto);
-        long jerseyBeto3 = subirJersey(beto);
 
-        // Un cuarto jersey → 409
+        // Un solo jersey por persona: el segundo → 409
+        long jerseyBetoRetirado = subirJersey(beto);
         mvc.perform(multipart("/api/jerseys").file(fotoPng()).header("Authorization", "Bearer " + beto))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.codigo").value("LIMITE_DE_JERSEYS"));
 
-        // Los eliminados no cuentan: si el admin le retira uno, Beto puede subir otro
-        mvc.perform(post("/api/admin/jerseys/" + jerseyBeto3 + "/eliminar").header("Authorization", "Bearer " + admin)
+        // Los eliminados no cuentan: si el admin se lo retira, Beto puede subir otro
+        mvc.perform(post("/api/admin/jerseys/" + jerseyBetoRetirado + "/eliminar")
+                        .header("Authorization", "Bearer " + admin)
                         .contentType(MediaType.APPLICATION_JSON).content("{\"motivo\":\"Foto borrosa\"}"))
                 .andExpect(status().isOk());
-        long jerseyBeto4 = subirJersey(beto);
+        long jerseyBeto = subirJersey(beto);
         mvc.perform(get("/api/jerseys/mios").header("Authorization", "Bearer " + beto))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.activos").value(3))
-                .andExpect(jsonPath("$.jerseys.length()").value(4))
+                .andExpect(jsonPath("$.activos").value(1))
+                .andExpect(jsonPath("$.jerseys.length()").value(2))
                 .andExpect(jsonPath("$.jerseys[?(@.estado == 'ELIMINADO')].motivoEliminacion").value("Foto borrosa"));
 
         // Un archivo que no es una imagen → 400
@@ -192,35 +190,27 @@ class FlujoCompletoTest {
         MvcResult lista = mvc.perform(get("/api/jerseys").header("Authorization", "Bearer " + ana))
                 .andExpect(status().isOk())
                 .andReturn();
-        // 5 jerseys en concurso (Ana 1, Carla 1, Beto 3; el eliminado no sale)
+        // 3 jerseys en concurso (Ana, Carla y Beto; el retirado no sale). La de Ana con sus dos fotos.
         List<Boolean> propios = JsonPath.read(lista.getResponse().getContentAsString(), "$[*].esPropio");
-        assertThat(propios).hasSize(5).containsOnlyOnce(true);
-        MvcResult listaBeto = mvc.perform(get("/api/jerseys").header("Authorization", "Bearer " + beto)).andReturn();
-        List<Boolean> propiosBeto = JsonPath.read(listaBeto.getResponse().getContentAsString(), "$[*].esPropio");
-        assertThat(propiosBeto).filteredOn(p -> p).hasSize(3);
+        assertThat(propios).hasSize(3).containsOnlyOnce(true);
+        List<String> traseras = JsonPath.read(lista.getResponse().getContentAsString(), "$[*].imagenTraseraUrl");
+        assertThat(traseras).filteredOn(t -> t != null).hasSize(1);
 
         // Votarse a sí misma → 400
         mvc.perform(post("/api/votos").header("Authorization", "Bearer " + ana)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(votos(Map.of(jerseyAna, 3, jerseyBeto1, 2, jerseyCarla, 1))))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.codigo").value("VOTO_PROPIO"));
-
-        // Beto tampoco puede votar NINGUNO de sus 3 jerseys
-        mvc.perform(post("/api/votos").header("Authorization", "Bearer " + beto)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(votos(Map.of(jerseyBeto2, 3, jerseyAna, 2))))
+                        .content(votos(Map.of(jerseyAna, 3, jerseyBeto, 2))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.codigo").value("VOTO_PROPIO"));
 
         // Más de 3 puntos (el sistema antiguo 6-5-4...) → 400
         mvc.perform(post("/api/votos").header("Authorization", "Bearer " + ana)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(votos(Map.of(jerseyBeto1, 6, jerseyCarla, 5, jerseyBeto2, 4))))
+                        .content(votos(Map.of(jerseyBeto, 6, jerseyCarla, 5))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.codigo").value("DATOS_INVALIDOS"));
 
-        // Beto solo tiene 2 jerseys ajenos: solo puede repartir 3 y 2, el 1 sobra
+        // Con 2 jerseys ajenos solo se puede repartir 3 y 2: el 1 sobra
         mvc.perform(post("/api/votos").header("Authorization", "Bearer " + beto)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(votos(Map.of(jerseyAna, 2, jerseyCarla, 1))))
@@ -229,19 +219,19 @@ class FlujoCompletoTest {
 
         mvc.perform(post("/api/votos").header("Authorization", "Bearer " + ana)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(votos(Map.of(jerseyBeto1, 3, jerseyCarla, 2, jerseyBeto2, 1))))
+                        .content(votos(Map.of(jerseyBeto, 3, jerseyCarla, 2))))
                 .andExpect(status().isCreated());
 
         // Votar otra vez → 409
         mvc.perform(post("/api/votos").header("Authorization", "Bearer " + ana)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(votos(Map.of(jerseyBeto1, 3, jerseyCarla, 2, jerseyBeto2, 1))))
+                        .content(votos(Map.of(jerseyBeto, 3, jerseyCarla, 2))))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.codigo").value("YA_HAS_VOTADO"));
 
         mvc.perform(post("/api/votos").header("Authorization", "Bearer " + carla)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(votos(Map.of(jerseyBeto1, 3, jerseyAna, 2, jerseyBeto4, 1))))
+                        .content(votos(Map.of(jerseyBeto, 3, jerseyAna, 2))))
                 .andExpect(status().isCreated());
 
         // ----- Jurado -----
@@ -266,43 +256,43 @@ class FlujoCompletoTest {
         // El voto popular no se manda por la ruta del jurado
         mvc.perform(post("/api/jurado/votos").header("Authorization", "Bearer " + carla)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(votosJurado("POPULAR", Map.of(jerseyBeto1, 3, jerseyAna, 2, jerseyBeto2, 1))))
+                        .content(votosJurado("POPULAR", Map.of(jerseyBeto, 3, jerseyAna, 2))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.codigo").value("CATEGORIA_NO_VALIDA"));
 
         // Mismas reglas que el voto popular: tampoco puede votar su propio jersey
         mvc.perform(post("/api/jurado/votos").header("Authorization", "Bearer " + carla)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(votosJurado("DIVERTIDO", Map.of(jerseyCarla, 3, jerseyAna, 2, jerseyBeto1, 1))))
+                        .content(votosJurado("DIVERTIDO", Map.of(jerseyCarla, 3, jerseyAna, 2))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.codigo").value("VOTO_PROPIO"));
 
         mvc.perform(post("/api/jurado/votos").header("Authorization", "Bearer " + carla)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(votosJurado("DIVERTIDO", Map.of(jerseyAna, 3, jerseyBeto2, 2, jerseyBeto4, 1))))
+                        .content(votosJurado("DIVERTIDO", Map.of(jerseyAna, 3, jerseyBeto, 2))))
                 .andExpect(status().isCreated());
 
         // Una sola vez por categoría
         mvc.perform(post("/api/jurado/votos").header("Authorization", "Bearer " + carla)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(votosJurado("DIVERTIDO", Map.of(jerseyAna, 3, jerseyBeto2, 2, jerseyBeto4, 1))))
+                        .content(votosJurado("DIVERTIDO", Map.of(jerseyAna, 3, jerseyBeto, 2))))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.codigo").value("YA_HAS_VOTADO"));
 
         // En otra categoría puede volver a dar los mismos puntos a los mismos jerseys
         mvc.perform(post("/api/jurado/votos").header("Authorization", "Bearer " + carla)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(votosJurado("ORIGINAL", Map.of(jerseyAna, 3, jerseyBeto2, 2, jerseyBeto4, 1))))
+                        .content(votosJurado("ORIGINAL", Map.of(jerseyAna, 3, jerseyBeto, 2))))
                 .andExpect(status().isCreated());
 
         mvc.perform(get("/api/jurado/categorias").header("Authorization", "Bearer " + carla))
                 .andExpect(jsonPath("$[?(@.categoria == 'DIVERTIDO')].votado").value(true))
                 .andExpect(jsonPath("$[?(@.categoria == 'ORIGINAL')].votado").value(true))
                 .andExpect(jsonPath("$[?(@.categoria == 'NAVIDENO')].votado").value(false))
-                .andExpect(jsonPath("$[0].votos.length()").value(3));
+                .andExpect(jsonPath("$[0].votos.length()").value(2));
 
         // En votación el admin ya no puede eliminar fotos
-        mvc.perform(post("/api/admin/jerseys/" + jerseyBeto1 + "/eliminar").header("Authorization", "Bearer " + admin)
+        mvc.perform(post("/api/admin/jerseys/" + jerseyBeto + "/eliminar").header("Authorization", "Bearer " + admin)
                         .contentType(MediaType.APPLICATION_JSON).content("{\"motivo\":\"prueba\"}"))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.codigo").value("FASE_INCORRECTA"));
@@ -317,12 +307,12 @@ class FlujoCompletoTest {
         mvc.perform(get("/api/ranking").header("Authorization", "Bearer " + carla))
                 .andExpect(status().isForbidden());
 
-        // El admin sí: el primer jersey de Beto gana el popular con 6 puntos (3 + 3).
+        // El admin sí: el jersey de Beto gana el popular con 6 puntos (3 + 3).
         // Los votos de Carla como jurado NO cuentan aquí: solo su voto popular.
         mvc.perform(get("/api/ranking").header("Authorization", "Bearer " + admin))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(5))
-                .andExpect(jsonPath("$[0].jerseyId").value(jerseyBeto1))
+                .andExpect(jsonPath("$.length()").value(3))
+                .andExpect(jsonPath("$[0].jerseyId").value(jerseyBeto))
                 .andExpect(jsonPath("$[0].puntos").value(6))
                 .andExpect(jsonPath("$[0].autor").value("Beto"));
 
@@ -387,10 +377,7 @@ class FlujoCompletoTest {
         mvc.perform(get("/api/auth/verificar").param("token", tokenEmail)).andExpect(status().isFound());
         String dani = login("dani@test.com", "password123");
 
-        long primero = subirJersey(dani);
-        long segundo = subirJersey(dani);
-
-        // Le queda UN hueco y manda DOS fotos a la vez (doble clic, dos pestañas...)
+        // Todavía no tiene jersey y manda DOS a la vez (doble clic, dos pestañas...)
         ExecutorService hilos = Executors.newFixedThreadPool(2);
         CountDownLatch salida = new CountDownLatch(1);
         Callable<Integer> subida = () -> {
@@ -407,12 +394,12 @@ class FlujoCompletoTest {
         // Exactamente una entra (201) y la otra se rechaza (409)
         assertThat(estados).containsExactlyInAnyOrder(201, 409);
         mvc.perform(get("/api/jerseys/mios").header("Authorization", "Bearer " + dani))
-                .andExpect(jsonPath("$.activos").value(3));
+                .andExpect(jsonPath("$.activos").value(1));
 
-        // Limpieza: retiramos los jerseys de Dani para que no cuenten en el concurso de los otros tests
+        // Limpieza: retiramos el jersey de Dani para que no cuente en el concurso de los otros tests
         MvcResult mios = mvc.perform(get("/api/jerseys/mios").header("Authorization", "Bearer " + dani)).andReturn();
         List<Number> ids = JsonPath.read(mios.getResponse().getContentAsString(), "$.jerseys[*].id");
-        assertThat(ids).extracting(Number::longValue).contains(primero, segundo);
+        assertThat(ids).hasSize(1);
         for (Number id : ids) {
             mvc.perform(post("/api/admin/jerseys/" + id + "/eliminar").header("Authorization", "Bearer " + admin)
                             .contentType(MediaType.APPLICATION_JSON).content("{\"motivo\":\"limpieza del test\"}"))

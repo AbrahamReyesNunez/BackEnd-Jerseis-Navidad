@@ -47,7 +47,7 @@ Y el backend responde con un **código de estado** y, normalmente, un JSON:
 | 401 Unauthorized | No has iniciado sesión | Falta el token |
 | 403 Forbidden | Sesión iniciada pero no puedes | Un usuario pide el ranking; fase incorrecta |
 | 404 Not Found | No existe | Un jersey que no existe |
-| 409 Conflict | Choca con algo que ya existe | Ya has votado, ya tienes 3 jerseys |
+| 409 Conflict | Choca con algo que ya existe | Ya has votado, ya tienes un jersey |
 | 429 Too Many Requests | Demasiadas peticiones seguidas | Muchos intentos de login desde la misma IP |
 
 **Todos los errores** tienen el mismo formato, así el front puede mostrar el mensaje directamente:
@@ -381,7 +381,7 @@ Ejemplo: "los jerseys tienen un título".
 - **Fase `PREPARACION`:** nueva, para antes de que empiece la subida o mientras el admin no ha puesto fechas.
 - **Sistema de votación 3-2-1:** cada usuario da 3 puntos a un jersey, 2 a otro y 1 a otro (antes era 6-5-4-3-2-1). Desempate en el ranking: más votos de 3, luego de 2, luego de 1.
 - **Sin mínimo de participantes:** si hay menos de 3 jerseys ajenos, se reparten solo las puntuaciones más altas (con 2 jerseys: 3 y 2; con 1: solo el 3).
-- **Hasta 3 jerseys por persona** (antes, 1). Los eliminados por el admin no cuentan. `GET /api/jerseys/mio` pasa a ser `GET /api/jerseys/mios` y devuelve `{ maximo, activos, jerseys: [...] }` (lista vacía si no hay ninguno, ya no da 404). Si ya tienes 3: `409 LIMITE_DE_JERSEYS`. Migración `V3__tres_jerseys_por_usuario.sql`.
+- **Un jersey por persona** (se probó con 3 y al final se quedó en 1; cada jersey con una o dos fotos). Los eliminados por el admin no cuentan: si te retiran el tuyo, puedes subir otro. Si ya tienes uno: `409 LIMITE_DE_JERSEYS`. El límite es `JerseyService.MAX_JERSEYS_POR_USUARIO`. `GET /api/jerseys/mios` devuelve `{ maximo, activos, jerseys: [...] }`: el activo y los eliminados, con su motivo (lista vacía si no hay ninguno). La migración `V3__tres_jerseys_por_usuario.sql` quitó el índice único de la BD; ahora el límite lo controla `JerseyService`, que bloquea al usuario mientras sube para que un doble clic no cuele dos.
 - **Rol `JURADO` y 5 categorías de premio** (bases, apartado 5). `POPULAR` la vota todo el mundo, también el jurado, con el mismo peso. `DIVERTIDO`, `ORIGINAL`, `NAVIDENO` y `EXTRAVAGANTE` solo las vota el jurado, con el mismo sistema 3-2-1 y las mismas reglas, una vez por categoría (`/api/jurado/**`). El admin nombra jurado con `PATCH /api/admin/usuarios/{id}/rol` `{"rol":"JURADO"}`. Cada voto guarda su `categoria` (migración `V4__jurado_y_categorias.sql`). Ranking por categoría: `GET /api/ranking?categoria=...`. El panel de sospechosos solo analiza el voto popular.
 - **Dos fotos por jersey:** delante (`foto`, obligatoria) y detrás (`fotoTrasera`, opcional). Las dos pasan las mismas comprobaciones (formato, caras, contenido inapropiado); si una falla no se guarda ninguna. Las respuestas traen `imagenTraseraUrl` (`null` si no hay). Columna `jerseys.imagen_trasera_nombre` (migración `V5__foto_trasera_y_mayor_18.sql`).
 - **Solo mayores de 18:** la casilla del registro pasa de `mayorDe14` a `mayorDe18` ("Debes tener 18 años o más para participar"). En la BD, `mayor_14_confirmado` se sustituye por `mayor_18_confirmado`; las cuentas que ya existían quedan en `false`, porque confirmaron 14 y no 18 (migración V5).
