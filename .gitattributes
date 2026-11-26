@@ -3,5 +3,6 @@
 
 # Archivos binarios: Git no debe tocarles los saltos de línea ni intentar mezclarlos
 *.onnx binary
+*.caffemodel binary
 *.jpg binary
 *.png binary

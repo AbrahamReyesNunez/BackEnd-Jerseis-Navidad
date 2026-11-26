@@ -1,8 +1,6 @@
 package com.jerseys.backend.imagen;
 
 import com.jerseys.backend.comun.ApiException;
-import nu.pattern.OpenCV;
-import org.opencv.core.CvType;
 import org.opencv.core.Mat;
 import org.opencv.core.Size;
 import org.opencv.objdetect.FaceDetectorYN;
@@ -12,12 +10,7 @@ import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
 import java.awt.image.BufferedImage;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.UncheckedIOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 
 /**
  * Rechaza fotos en las que aparece una cara (protección de datos: el concurso es de jerseys,
@@ -28,7 +21,7 @@ import java.nio.file.StandardCopyOption;
  * (renos, muñecos de nieve, Papá Noel...).
  *
  * Modelo: src/main/resources/modelos/face_detection_yunet_2023mar.onnx
- *         (opencv_zoo, licencia MIT: https://github.com/opencv/opencv_zoo)
+ *         (opencv_zoo, licencia MIT: ver modelos/LICENCIA-yunet.txt)
  */
 @Component
 @Order(1)
@@ -46,10 +39,8 @@ public class DetectorCaras implements ValidadorImagen {
     private final FaceDetectorYN detector;
 
     public DetectorCaras() {
-        // Carga la parte nativa de OpenCV (C++) que viene dentro del jar, para el sistema operativo actual
-        OpenCV.loadLocally();
-        // OpenCV necesita el modelo como archivo del disco, y dentro del jar no lo es: lo copiamos a /tmp
-        Path modelo = copiarATemporal(MODELO);
+        OpenCvUtil.cargar();
+        Path modelo = OpenCvUtil.copiarATemporal(MODELO);
         // El tamaño (320x320) es provisional: se ajusta al de cada foto antes de detectar
         this.detector = FaceDetectorYN.create(modelo.toString(), "", new Size(320, 320),
                 CONFIANZA_MINIMA, UMBRAL_SOLAPAMIENTO, MAX_CARAS);
@@ -69,7 +60,7 @@ public class DetectorCaras implements ValidadorImagen {
      * usar desde dos peticiones a la vez. Las subidas de fotos son pocas: esperar turno no se nota.
      */
     synchronized int contarCaras(BufferedImage imagen) {
-        Mat foto = aMat(imagen);
+        Mat foto = OpenCvUtil.aMat(imagen);
         Mat caras = new Mat();
         try {
             detector.setInputSize(new Size(foto.cols(), foto.rows()));
@@ -80,36 +71,6 @@ public class DetectorCaras implements ValidadorImagen {
             // Los Mat viven en memoria nativa (fuera de Java): hay que liberarlos a mano
             foto.release();
             caras.release();
-        }
-    }
-
-    /** Convierte la imagen de Java a una matriz de OpenCV, con los colores en orden BGR (azul, verde, rojo). */
-    private static Mat aMat(BufferedImage imagen) {
-        int ancho = imagen.getWidth();
-        int alto = imagen.getHeight();
-        int[] argb = imagen.getRGB(0, 0, ancho, alto, null, 0, ancho);
-        byte[] bgr = new byte[ancho * alto * 3];
-        for (int i = 0; i < argb.length; i++) {
-            bgr[i * 3] = (byte) argb[i];             // azul
-            bgr[i * 3 + 1] = (byte) (argb[i] >> 8);  // verde
-            bgr[i * 3 + 2] = (byte) (argb[i] >> 16); // rojo
-        }
-        Mat mat = new Mat(alto, ancho, CvType.CV_8UC3);
-        mat.put(0, 0, bgr);
-        return mat;
-    }
-
-    private static Path copiarATemporal(String recurso) {
-        try (InputStream entrada = DetectorCaras.class.getResourceAsStream(recurso)) {
-            if (entrada == null) {
-                throw new IllegalStateException("No se encuentra el modelo " + recurso + " en src/main/resources");
-            }
-            Path temporal = Files.createTempFile("yunet-", ".onnx");
-            temporal.toFile().deleteOnExit();
-            Files.copy(entrada, temporal, StandardCopyOption.REPLACE_EXISTING);
-            return temporal;
-        } catch (IOException e) {
-            throw new UncheckedIOException("No se ha podido preparar el modelo de caras", e);
         }
     }
 }
