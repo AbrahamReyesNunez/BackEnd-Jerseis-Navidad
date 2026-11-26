@@ -29,8 +29,13 @@ import java.util.UUID;
 @Service
 public class JerseyService {
 
-    /** Cuántos jerseys activos (no eliminados) puede tener cada usuario en el concurso. */
-    public static final int MAX_JERSEYS_POR_USUARIO = 3;
+    /**
+     * Cuántos jerseys activos (no eliminados) puede tener cada usuario en el concurso.
+     * Decisión final de la clase: UNO (cada jersey con una o dos fotos, delante y detrás).
+     * Si algún día se cambia, basta con este número (y el mensaje de LIMITE_DE_JERSEYS en subir()):
+     * el resto del código ya cuenta y bloquea.
+     */
+    public static final int MAX_JERSEYS_POR_USUARIO = 1;
 
     private static final Logger log = LoggerFactory.getLogger(JerseyService.class);
 
@@ -64,15 +69,15 @@ public class JerseyService {
     public MiJerseyResponse subir(Long usuarioId, MultipartFile foto, MultipartFile fotoTrasera) {
         fases.exigir("subir jerseys", Fase.SUBIDA);
 
-        // Bloqueamos la fila del usuario hasta el final de la transacción. Si sube dos fotos a la vez
-        // (doble clic, dos pestañas...), la segunda espera aquí a que termine la primera, y al contar
-        // ya ve el jersey nuevo. Sin esto, las dos contarían "2" y se colarían 4 jerseys.
+        // Bloqueamos la fila del usuario hasta el final de la transacción. Si sube dos jerseys a la vez
+        // (doble clic, dos pestañas...), la segunda subida espera aquí a que termine la primera, y al
+        // contar ya ve el jersey nuevo. Sin esto, las dos contarían "0" y se colarían dos jerseys.
         Usuario usuario = usuarios.findByIdBloqueando(usuarioId)
                 .orElseThrow(() -> ApiException.noEncontrado("USUARIO_NO_ENCONTRADO", "Usuario no encontrado"));
-        // Los eliminados no cuentan: si el admin te retira uno, puedes subir otro
+        // Los eliminados no cuentan: si el admin te retira el jersey, puedes subir otro
         if (jerseys.countByUsuarioIdAndEstadoNot(usuarioId, EstadoJersey.ELIMINADO) >= MAX_JERSEYS_POR_USUARIO) {
             throw ApiException.conflicto("LIMITE_DE_JERSEYS",
-                    "Ya tienes " + MAX_JERSEYS_POR_USUARIO + " jerseys en el concurso, que es el máximo");
+                    "Ya tienes un jersey en el concurso. Solo se permite uno por persona.");
         }
 
         // Primero se comprueban LAS DOS fotos y solo después se guarda nada: si la de detrás no vale,
