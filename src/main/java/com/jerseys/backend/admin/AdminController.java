@@ -110,7 +110,7 @@ public class AdminController {
 
     @GetMapping("/sospechosos")
     @Operation(summary = "Señales de trampa: ráfagas de registros o votos desde una IP, cuentas de una IP "
-            + "que dan 6 puntos al mismo jersey y papeletas idénticas. Son pistas, no pruebas: revisa cada caso")
+            + "que dan 3 puntos al mismo jersey y papeletas idénticas. Son pistas, no pruebas: revisa cada caso")
     public PanelSospechososResponse sospechosos() {
         return panelSospechosos.analizar();
     }

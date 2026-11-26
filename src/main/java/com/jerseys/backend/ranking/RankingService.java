@@ -19,7 +19,7 @@ import java.util.stream.Collectors;
 
 /**
  * Calcula el ranking: suma de puntos de los votos válidos (no anulados).
- * Desempate: gana quien tenga más votos de 6; si siguen empatados, más de 5; etc.
+ * Desempate: gana quien tenga más votos de 3; si siguen empatados, más de 2; luego más de 1.
  *
  * Se calcula en Java porque es fácil de leer y, para un concurso de este tamaño,
  * rapidísimo. Con millones de votos convendría hacerlo en SQL (GROUP BY).

@@ -6,6 +6,7 @@ import com.jerseys.backend.admin.SospechososDtos.PanelSospechososResponse;
 import com.jerseys.backend.admin.SospechososDtos.PapeletasIdenticas;
 import com.jerseys.backend.admin.SospechososDtos.Senal;
 import com.jerseys.backend.admin.SospechososDtos.VotoResumen;
+import com.jerseys.backend.voto.VotoService;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -41,10 +42,13 @@ public final class AnalizadorSospechosos {
     static final int MIN_MISMO_FAVORITO = 3;
     /** ...y qué porcentaje de los votantes de esa IP tienen que ser. */
     static final int PORCENTAJE_MISMO_FAVORITO = 60;
-    /** Con pocas puntuaciones, que dos papeletas coincidan puede ser casualidad. */
+    /**
+     * Con pocas puntuaciones, que dos papeletas coincidan puede ser casualidad.
+     * Con el sistema 3-2-1, 3 votos = papeleta completa.
+     */
     static final int MIN_VOTOS_PAPELETA = 3;
 
-    private static final int PUNTOS_MAXIMOS = 6;
+    private static final int PUNTOS_MAXIMOS = VotoService.MAX_VOTOS;
 
     /** Datos de una cuenta que necesita el análisis. */
     public record DatosCuenta(Long id, String email, String nombre, Instant fechaRegistro,
@@ -143,14 +147,14 @@ public final class AnalizadorSospechosos {
         return grupos;
     }
 
-    /** ¿Muchas de las cuentas que votaron desde esta IP dieron los 6 puntos al mismo jersey? */
+    /** ¿Muchas de las cuentas que votaron desde esta IP dieron la máxima puntuación al mismo jersey? */
     private static Optional<String> mismoFavorito(Map<Long, List<DatosVoto>> votantes) {
-        Map<Long, Long> seisPuntosPorJersey = votantes.values().stream()
+        Map<Long, Long> maximaPuntuacionPorJersey = votantes.values().stream()
                 .flatMap(Collection::stream)
                 .filter(v -> v.puntos() == PUNTOS_MAXIMOS)
                 .collect(Collectors.groupingBy(DatosVoto::jerseyId, Collectors.counting()));
 
-        return seisPuntosPorJersey.entrySet().stream()
+        return maximaPuntuacionPorJersey.entrySet().stream()
                 .max(Map.Entry.comparingByValue())
                 .filter(e -> e.getValue() >= MIN_MISMO_FAVORITO
                         && e.getValue() * 100 >= (long) PORCENTAJE_MISMO_FAVORITO * votantes.size())

@@ -32,7 +32,7 @@ public class VotoController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    @Operation(summary = "Envía todos tus votos de golpe: 6,5,4,3,2,1 a jerseys distintos (no el tuyo)")
+    @Operation(summary = "Envía tus 3 votos de golpe: 3, 2 y 1 puntos a jerseys distintos (no el tuyo)")
     public List<MiVotoResponse> votar(@AuthenticationPrincipal UsuarioActual yo,
                                       @Valid @RequestBody VotarRequest peticion,
                                       HttpServletRequest http) {

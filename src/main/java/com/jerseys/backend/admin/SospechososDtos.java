@@ -14,7 +14,7 @@ public final class SospechososDtos {
         RAFAGA_REGISTROS,
         /** Muchas cuentas votando desde la misma IP en pocos minutos. */
         RAFAGA_VOTOS,
-        /** La mayoría de las cuentas de una IP dieron la máxima puntuación al mismo jersey. */
+        /** La mayoría de las cuentas de una IP dieron la máxima puntuación (3) al mismo jersey. */
         MISMO_FAVORITO
     }
 
