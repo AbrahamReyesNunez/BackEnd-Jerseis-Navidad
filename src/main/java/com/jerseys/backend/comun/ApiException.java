@@ -39,6 +39,10 @@ public class ApiException extends RuntimeException {
         return new ApiException(HttpStatus.CONFLICT, codigo, mensaje);
     }
 
+    public static ApiException demasiadasPeticiones(String codigo, String mensaje) {
+        return new ApiException(HttpStatus.TOO_MANY_REQUESTS, codigo, mensaje);
+    }
+
     public HttpStatus getEstado() { return estado; }
     public String getCodigo() { return codigo; }
 }
