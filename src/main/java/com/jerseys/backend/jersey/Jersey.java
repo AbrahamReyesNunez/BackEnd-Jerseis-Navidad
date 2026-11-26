@@ -28,8 +28,13 @@ public class Jersey {
     @JoinColumn(name = "usuario_id")
     private Usuario usuario;
 
+    /** Foto de DELANTE (obligatoria). Nombre del archivo en el FTP. */
     @Column(name = "imagen_nombre", nullable = false, unique = true)
     private String imagenNombre;
+
+    /** Foto de DETRÁS (opcional): null si el participante no la subió. */
+    @Column(name = "imagen_trasera_nombre", unique = true)
+    private String imagenTraseraNombre;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
@@ -51,9 +56,10 @@ public class Jersey {
     protected Jersey() {
     }
 
-    public Jersey(Usuario usuario, String imagenNombre, Instant fechaSubida) {
+    public Jersey(Usuario usuario, String imagenNombre, String imagenTraseraNombre, Instant fechaSubida) {
         this.usuario = usuario;
         this.imagenNombre = imagenNombre;
+        this.imagenTraseraNombre = imagenTraseraNombre;
         this.fechaSubida = fechaSubida;
     }
 
@@ -71,6 +77,7 @@ public class Jersey {
     public Long getId() { return id; }
     public Usuario getUsuario() { return usuario; }
     public String getImagenNombre() { return imagenNombre; }
+    public String getImagenTraseraNombre() { return imagenTraseraNombre; }
     public EstadoJersey getEstado() { return estado; }
     public String getMotivoEliminacion() { return motivoEliminacion; }
     public Instant getFechaSubida() { return fechaSubida; }

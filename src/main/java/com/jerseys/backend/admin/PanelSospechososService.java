@@ -4,6 +4,7 @@ import com.jerseys.backend.admin.AnalizadorSospechosos.DatosCuenta;
 import com.jerseys.backend.admin.AnalizadorSospechosos.DatosVoto;
 import com.jerseys.backend.admin.SospechososDtos.PanelSospechososResponse;
 import com.jerseys.backend.usuario.UsuarioRepository;
+import com.jerseys.backend.voto.Categoria;
 import com.jerseys.backend.voto.VotoRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -32,8 +33,10 @@ public class PanelSospechososService {
                         u.isVerificado(), u.isActivo(), u.getIpRegistroHash()))
                 .toList();
 
-        // Los votos ya anulados no cuentan: el admin ya se ocupó de ellos
+        // Solo el voto POPULAR: los votos del jurado los hace gente de confianza nombrada por el admin.
+        // Los votos ya anulados no cuentan: el admin ya se ocupó de ellos.
         List<DatosVoto> votosValidos = votos.findAllParaAdmin().stream()
+                .filter(v -> v.getCategoria() == Categoria.POPULAR)
                 .filter(v -> !v.isAnulado())
                 .map(v -> new DatosVoto(v.getUsuario().getId(), v.getJersey().getId(), v.getPuntos(),
                         v.getFecha(), v.getIpHash()))

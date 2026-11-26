@@ -22,6 +22,8 @@ import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
@@ -34,9 +36,11 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -75,10 +79,18 @@ class FlujoCompletoTest {
         // ----- Registro: las casillas son obligatorias -----
         mvc.perform(post("/api/auth/registro").contentType(MediaType.APPLICATION_JSON).content("""
                         {"email":"sin@casillas.com","nombre":"Sin","password":"12345678",
-                         "aceptaPrivacidad":false,"aceptaConsentimiento":true,"mayorDe14":true}"""))
+                         "aceptaPrivacidad":false,"aceptaConsentimiento":true,"mayorDe18":true}"""))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.codigo").value("DATOS_INVALIDOS"))
                 .andExpect(jsonPath("$.campos.aceptaPrivacidad").exists());
+
+        // Hay que confirmar que se es mayor de 18
+        mvc.perform(post("/api/auth/registro").contentType(MediaType.APPLICATION_JSON).content("""
+                        {"email":"menor@test.com","nombre":"Menor","password":"12345678",
+                         "aceptaPrivacidad":true,"aceptaConsentimiento":true,"mayorDe18":false}"""))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.codigo").value("DATOS_INVALIDOS"))
+                .andExpect(jsonPath("$.campos.mayorDe18").value("Debes tener 18 años o más para participar"));
 
         // Correos temporales (de usar y tirar) → 400
         mvc.perform(post("/api/auth/registro").contentType(MediaType.APPLICATION_JSON)
@@ -119,8 +131,28 @@ class FlujoCompletoTest {
                 ahora.plus(2, ChronoUnit.HOURS), ahora.plus(3, ChronoUnit.HOURS));
         mvc.perform(get("/api/fase")).andExpect(jsonPath("$.fase").value("SUBIDA"));
 
-        long jerseyAna = subirJersey(ana);
+        // Ana sube su jersey con las dos fotos (delante y detrás); Carla, solo con la de delante
+        MvcResult conDosFotos = mvc.perform(multipart("/api/jerseys").file(fotoPng()).file(fotoPng("fotoTrasera"))
+                        .header("Authorization", "Bearer " + ana))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.imagenUrl").isNotEmpty())
+                .andExpect(jsonPath("$.imagenTraseraUrl").isNotEmpty())
+                .andReturn();
+        long jerseyAna = ((Number) JsonPath.read(conDosFotos.getResponse().getContentAsString(), "$.id")).longValue();
         long jerseyCarla = subirJersey(carla);
+        mvc.perform(get("/api/jerseys/mios").header("Authorization", "Bearer " + carla))
+                .andExpect(jsonPath("$.jerseys[0].imagenTraseraUrl").value(nullValue()));
+
+        // Si la foto de detrás no vale, no se guarda NADA (ni la de delante) y el mensaje dice cuál falla
+        long archivosAntes = archivosSubidos();
+        var traseraFalsa = new MockMultipartFile("fotoTrasera", "detras.png", "image/png", "no soy una imagen".getBytes());
+        mvc.perform(multipart("/api/jerseys").file(fotoPng()).file(traseraFalsa).header("Authorization", "Bearer " + admin))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.codigo").value("FORMATO_NO_VALIDO"))
+                .andExpect(jsonPath("$.mensaje").value("Foto de detrás: La foto debe ser JPG o PNG"));
+        mvc.perform(get("/api/jerseys/mios").header("Authorization", "Bearer " + admin))
+                .andExpect(jsonPath("$.activos").value(0));
+        assertThat(archivosSubidos()).isEqualTo(archivosAntes);
         // Beto sube los 3 que se permiten
         long jerseyBeto1 = subirJersey(beto);
         long jerseyBeto2 = subirJersey(beto);
@@ -212,6 +244,63 @@ class FlujoCompletoTest {
                         .content(votos(Map.of(jerseyBeto1, 3, jerseyAna, 2, jerseyBeto4, 1))))
                 .andExpect(status().isCreated());
 
+        // ----- Jurado -----
+        // Un usuario normal no puede entrar en las rutas del jurado
+        mvc.perform(get("/api/jurado/categorias").header("Authorization", "Bearer " + ana))
+                .andExpect(status().isForbidden());
+
+        // El admin nombra jurado a Carla (que ya ha votado en el popular, como cualquiera).
+        // El rol se lee de la BD en cada petición: su token sirve sin volver a entrar.
+        mvc.perform(patch("/api/admin/usuarios/" + idDe(carla) + "/rol").header("Authorization", "Bearer " + admin)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"rol\":\"JURADO\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.rol").value("JURADO"));
+
+        mvc.perform(get("/api/jurado/categorias").header("Authorization", "Bearer " + carla))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(4))
+                .andExpect(jsonPath("$[0].categoria").value("DIVERTIDO"))
+                .andExpect(jsonPath("$[0].nombre").value("El más divertido"))
+                .andExpect(jsonPath("$[0].votado").value(false));
+
+        // El voto popular no se manda por la ruta del jurado
+        mvc.perform(post("/api/jurado/votos").header("Authorization", "Bearer " + carla)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(votosJurado("POPULAR", Map.of(jerseyBeto1, 3, jerseyAna, 2, jerseyBeto2, 1))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.codigo").value("CATEGORIA_NO_VALIDA"));
+
+        // Mismas reglas que el voto popular: tampoco puede votar su propio jersey
+        mvc.perform(post("/api/jurado/votos").header("Authorization", "Bearer " + carla)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(votosJurado("DIVERTIDO", Map.of(jerseyCarla, 3, jerseyAna, 2, jerseyBeto1, 1))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.codigo").value("VOTO_PROPIO"));
+
+        mvc.perform(post("/api/jurado/votos").header("Authorization", "Bearer " + carla)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(votosJurado("DIVERTIDO", Map.of(jerseyAna, 3, jerseyBeto2, 2, jerseyBeto4, 1))))
+                .andExpect(status().isCreated());
+
+        // Una sola vez por categoría
+        mvc.perform(post("/api/jurado/votos").header("Authorization", "Bearer " + carla)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(votosJurado("DIVERTIDO", Map.of(jerseyAna, 3, jerseyBeto2, 2, jerseyBeto4, 1))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.codigo").value("YA_HAS_VOTADO"));
+
+        // En otra categoría puede volver a dar los mismos puntos a los mismos jerseys
+        mvc.perform(post("/api/jurado/votos").header("Authorization", "Bearer " + carla)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(votosJurado("ORIGINAL", Map.of(jerseyAna, 3, jerseyBeto2, 2, jerseyBeto4, 1))))
+                .andExpect(status().isCreated());
+
+        mvc.perform(get("/api/jurado/categorias").header("Authorization", "Bearer " + carla))
+                .andExpect(jsonPath("$[?(@.categoria == 'DIVERTIDO')].votado").value(true))
+                .andExpect(jsonPath("$[?(@.categoria == 'ORIGINAL')].votado").value(true))
+                .andExpect(jsonPath("$[?(@.categoria == 'NAVIDENO')].votado").value(false))
+                .andExpect(jsonPath("$[0].votos.length()").value(3));
+
         // En votación el admin ya no puede eliminar fotos
         mvc.perform(post("/api/admin/jerseys/" + jerseyBeto1 + "/eliminar").header("Authorization", "Bearer " + admin)
                         .contentType(MediaType.APPLICATION_JSON).content("{\"motivo\":\"prueba\"}"))
@@ -224,13 +313,31 @@ class FlujoCompletoTest {
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.codigo").value("SIN_PERMISO"));
 
-        // El admin sí: el primer jersey de Beto gana con 6 puntos (3 + 3)
+        // El jurado tampoco: no debe ver resultados mientras vota
+        mvc.perform(get("/api/ranking").header("Authorization", "Bearer " + carla))
+                .andExpect(status().isForbidden());
+
+        // El admin sí: el primer jersey de Beto gana el popular con 6 puntos (3 + 3).
+        // Los votos de Carla como jurado NO cuentan aquí: solo su voto popular.
         mvc.perform(get("/api/ranking").header("Authorization", "Bearer " + admin))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(5))
                 .andExpect(jsonPath("$[0].jerseyId").value(jerseyBeto1))
                 .andExpect(jsonPath("$[0].puntos").value(6))
                 .andExpect(jsonPath("$[0].autor").value("Beto"));
+
+        // Ranking de una categoría del jurado: Ana gana «El más divertido» con los 3 puntos de Carla
+        mvc.perform(get("/api/ranking").param("categoria", "DIVERTIDO").header("Authorization", "Bearer " + admin))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].jerseyId").value(jerseyAna))
+                .andExpect(jsonPath("$[0].puntos").value(3));
+        // Categoría en la que nadie ha votado: todos a 0
+        mvc.perform(get("/api/ranking").param("categoria", "NAVIDENO").header("Authorization", "Bearer " + admin))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].puntos").value(0));
+        mvc.perform(get("/api/ranking").param("categoria", "NOEXISTE").header("Authorization", "Bearer " + admin))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.codigo").value("PARAMETRO_INVALIDO"));
 
         // ----- Panel de sospechosos -----
         // En este test todos se registran desde 127.0.0.1 en pocos segundos → ráfaga
@@ -334,7 +441,18 @@ class FlujoCompletoTest {
     private String cuerpoRegistro(String email, String nombre) {
         return """
                 {"email":"%s","nombre":"%s","password":"password123",
-                 "aceptaPrivacidad":true,"aceptaConsentimiento":true,"mayorDe14":true}""".formatted(email, nombre);
+                 "aceptaPrivacidad":true,"aceptaConsentimiento":true,"mayorDe18":true}""".formatted(email, nombre);
+    }
+
+    /** El id del usuario dueño de un token. */
+    private long idDe(String token) throws Exception {
+        MvcResult r = mvc.perform(get("/api/auth/yo").header("Authorization", "Bearer " + token)).andReturn();
+        return ((Number) JsonPath.read(r.getResponse().getContentAsString(), "$.id")).longValue();
+    }
+
+    /** Cuerpo para POST /api/jurado/votos: {"categoria": "...", "votos": [...]} */
+    private String votosJurado(String categoria, Map<Long, Integer> puntosPorJersey) {
+        return "{\"categoria\":\"" + categoria + "\"," + votos(puntosPorJersey).substring(1);
     }
 
     private void registrar(String email, String nombre) throws Exception {
@@ -386,8 +504,13 @@ class FlujoCompletoTest {
         return sb.append("]}").toString();
     }
 
-    /** Genera en memoria una imagen PNG de 400x300 con transparencia. */
+    /** Foto de delante (campo "foto"). */
     private static MockMultipartFile fotoPng() throws IOException {
+        return fotoPng("foto");
+    }
+
+    /** Genera en memoria una imagen PNG de 400x300 con transparencia, en el campo del formulario indicado. */
+    private static MockMultipartFile fotoPng(String campo) throws IOException {
         BufferedImage img = new BufferedImage(400, 300, BufferedImage.TYPE_INT_ARGB);
         Graphics2D g = img.createGraphics();
         g.setColor(Color.RED);
@@ -395,6 +518,17 @@ class FlujoCompletoTest {
         g.dispose();
         ByteArrayOutputStream salida = new ByteArrayOutputStream();
         ImageIO.write(img, "png", salida);
-        return new MockMultipartFile("foto", "jersey.png", "image/png", salida.toByteArray());
+        return new MockMultipartFile(campo, "jersey.png", "image/png", salida.toByteArray());
+    }
+
+    /** Cuántas fotos hay guardadas en la carpeta de los tests (app.imagenes.directorio-local). */
+    private static long archivosSubidos() throws IOException {
+        Path carpeta = Path.of("target", "imagenes-test");
+        if (!Files.exists(carpeta)) {
+            return 0;
+        }
+        try (var archivos = Files.list(carpeta)) {
+            return archivos.count();
+        }
     }
 }

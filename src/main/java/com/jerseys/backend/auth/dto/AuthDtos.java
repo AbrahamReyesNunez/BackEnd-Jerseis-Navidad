@@ -41,8 +41,8 @@ public final class AuthDtos {
             @AssertTrue(message = "Debes dar tu consentimiento")
             boolean aceptaConsentimiento,
 
-            @AssertTrue(message = "Debes tener 14 años o más")
-            boolean mayorDe14,
+            @AssertTrue(message = "Debes tener 18 años o más para participar")
+            boolean mayorDe18,
 
             // Token que da el widget de Cloudflare Turnstile al superar el CAPTCHA.
             // No lleva @NotBlank porque en desarrollo el CAPTCHA puede estar desactivado:

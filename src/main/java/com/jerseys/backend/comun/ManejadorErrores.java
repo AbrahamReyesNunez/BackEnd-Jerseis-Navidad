@@ -9,6 +9,7 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
@@ -44,6 +45,13 @@ public class ManejadorErrores {
     public ResponseEntity<ErrorRespuesta> jsonMalFormado(HttpMessageNotReadableException e) {
         return ResponseEntity.badRequest()
                 .body(new ErrorRespuesta("JSON_INVALIDO", "El cuerpo de la petición no es un JSON válido"));
+    }
+
+    /** Un parámetro de la URL con un valor que no vale, p. ej. /api/ranking?categoria=NOEXISTE */
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ErrorRespuesta> parametroInvalido(MethodArgumentTypeMismatchException e) {
+        return ResponseEntity.badRequest()
+                .body(new ErrorRespuesta("PARAMETRO_INVALIDO", "El valor de '" + e.getName() + "' no es válido"));
     }
 
     @ExceptionHandler(MissingServletRequestPartException.class)

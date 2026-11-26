@@ -4,6 +4,7 @@ import com.jerseys.backend.jersey.EstadoJersey;
 import com.jerseys.backend.jersey.Jersey;
 import com.jerseys.backend.jersey.JerseyRepository;
 import com.jerseys.backend.jersey.JerseyService;
+import com.jerseys.backend.voto.Categoria;
 import com.jerseys.backend.voto.Voto;
 import com.jerseys.backend.voto.VotoRepository;
 import com.jerseys.backend.voto.VotoService;
@@ -18,7 +19,8 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
- * Calcula el ranking: suma de puntos de los votos válidos (no anulados).
+ * Calcula el ranking de una categoría (popular o una del jurado): suma de puntos de los
+ * votos válidos (no anulados) de esa categoría.
  * Desempate: gana quien tenga más votos de 3; si siguen empatados, más de 2; luego más de 1.
  *
  * Se calcula en Java porque es fácil de leer y, para un concurso de este tamaño,
@@ -27,8 +29,10 @@ import java.util.stream.Collectors;
 @Service
 public class RankingService {
 
-    public record PosicionRanking(int posicion, Long jerseyId, String imagenUrl, String autor, int puntos,
-                                  int numeroVotos, Map<Integer, Integer> votosPorPuntuacion) {}
+    /** imagenTraseraUrl es null si el jersey no tiene foto de detrás. */
+    public record PosicionRanking(int posicion, Long jerseyId, String imagenUrl, String imagenTraseraUrl,
+                                  String autor, int puntos, int numeroVotos,
+                                  Map<Integer, Integer> votosPorPuntuacion) {}
 
     private final VotoRepository votos;
     private final JerseyRepository jerseys;
@@ -41,9 +45,9 @@ public class RankingService {
     }
 
     @Transactional(readOnly = true)
-    public List<PosicionRanking> calcular() {
-        // Votos válidos agrupados por jersey
-        Map<Long, List<Voto>> votosPorJersey = votos.findValidosParaRanking().stream()
+    public List<PosicionRanking> calcular(Categoria categoria) {
+        // Votos válidos de esa categoría, agrupados por jersey
+        Map<Long, List<Voto>> votosPorJersey = votos.findValidosParaRanking(categoria).stream()
                 .collect(Collectors.groupingBy(v -> v.getJersey().getId()));
 
         // Partimos de TODOS los jerseys aprobados, para que salgan también los que tienen 0 votos
@@ -64,7 +68,8 @@ public class RankingService {
         for (int i = 0; i < filas.size(); i++) {
             Fila f = filas.get(i);
             ranking.add(new PosicionRanking(i + 1, f.jersey().getId(), jerseyService.url(f.jersey()),
-                    f.jersey().getUsuario().getNombre(), f.puntos(), f.votos().size(), f.desglose()));
+                    jerseyService.urlTrasera(f.jersey()), f.jersey().getUsuario().getNombre(), f.puntos(),
+                    f.votos().size(), f.desglose()));
         }
         return ranking;
     }

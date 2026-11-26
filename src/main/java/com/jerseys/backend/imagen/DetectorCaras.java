@@ -13,8 +13,8 @@ import java.awt.image.BufferedImage;
 import java.nio.file.Path;
 
 /**
- * Rechaza fotos en las que aparece una cara (protección de datos: el concurso es de jerseys,
- * no de personas, y muchos participantes son menores).
+ * Rechaza fotos en las que aparece una cara (bases del concurso, apartados 3 y 8: la foto debe
+ * centrarse en el jersey y no puede mostrar la cara de ninguna persona).
  *
  * Usa OpenCV con YuNet, una red neuronal pequeña (232 KB) entrenada para encontrar caras REALES.
  * No usamos los antiguos "Haar cascades": confunden con caras los estampados navideños
