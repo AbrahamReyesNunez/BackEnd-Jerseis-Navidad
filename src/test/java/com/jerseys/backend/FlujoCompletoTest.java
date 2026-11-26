@@ -139,26 +139,39 @@ class FlujoCompletoTest {
         // Votarse a sí misma → 400
         mvc.perform(post("/api/votos").header("Authorization", "Bearer " + ana)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(votos(Map.of(jerseyAna, 6, jerseyBeto, 5))))
+                        .content(votos(Map.of(jerseyAna, 3, jerseyBeto, 2))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.codigo").value("VOTO_PROPIO"));
 
-        // Con 2 jerseys ajenos se reparten solo 6 y 5
+        // Más de 3 puntos (el sistema antiguo 6-5-4...) → 400
         mvc.perform(post("/api/votos").header("Authorization", "Bearer " + ana)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(votos(Map.of(jerseyBeto, 6, jerseyCarla, 5))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.codigo").value("DATOS_INVALIDOS"));
+
+        // Con 2 jerseys ajenos solo se puede repartir 3 y 2: el 1 sobra
+        mvc.perform(post("/api/votos").header("Authorization", "Bearer " + ana)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(votos(Map.of(jerseyBeto, 2, jerseyCarla, 1))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.codigo").value("PUNTOS_INCORRECTOS"));
+
+        mvc.perform(post("/api/votos").header("Authorization", "Bearer " + ana)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(votos(Map.of(jerseyBeto, 3, jerseyCarla, 2))))
                 .andExpect(status().isCreated());
 
         // Votar otra vez → 409
         mvc.perform(post("/api/votos").header("Authorization", "Bearer " + ana)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(votos(Map.of(jerseyBeto, 6, jerseyCarla, 5))))
+                        .content(votos(Map.of(jerseyBeto, 3, jerseyCarla, 2))))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.codigo").value("YA_HAS_VOTADO"));
 
         mvc.perform(post("/api/votos").header("Authorization", "Bearer " + carla)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(votos(Map.of(jerseyBeto, 6, jerseyAna, 5))))
+                        .content(votos(Map.of(jerseyBeto, 3, jerseyAna, 2))))
                 .andExpect(status().isCreated());
 
         // En votación el admin ya no puede eliminar fotos
@@ -173,11 +186,11 @@ class FlujoCompletoTest {
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.codigo").value("SIN_PERMISO"));
 
-        // El admin sí: Beto gana con 12 puntos (6 + 6)
+        // El admin sí: Beto gana con 6 puntos (3 + 3)
         mvc.perform(get("/api/ranking").header("Authorization", "Bearer " + admin))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].jerseyId").value(jerseyBeto))
-                .andExpect(jsonPath("$[0].puntos").value(12))
+                .andExpect(jsonPath("$[0].puntos").value(6))
                 .andExpect(jsonPath("$[0].autor").value("Beto"));
 
         // ----- Panel de sospechosos -----

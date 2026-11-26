@@ -118,15 +118,14 @@ if (!r.ok) turnstile.reset();   // el token es de UN solo uso: si el registro fa
 
 Para probar en local, usad la sitekey de prueba `1x00000000000000000000AA` (siempre aprueba). En el backend el CAPTCHA está desactivado en el perfil `dev`; para probarlo de verdad, poned `app.captcha.activado=true` en `application-dev.properties`.
 
-**Votar** (los 6 de golpe):
+**Votar** (los 3 de golpe: 3, 2 y 1 puntos a jerseys distintos):
 
 ```js
 await fetch("/api/votos", {
   method: "POST",
   headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
   body: JSON.stringify({ votos: [
-    { jerseyId: 12, puntos: 6 }, { jerseyId: 3, puntos: 5 }, { jerseyId: 7, puntos: 4 },
-    { jerseyId: 1,  puntos: 3 }, { jerseyId: 9, puntos: 2 }, { jerseyId: 4, puntos: 1 },
+    { jerseyId: 12, puntos: 3 }, { jerseyId: 3, puntos: 2 }, { jerseyId: 7, puntos: 1 },
   ]}),
 });
 ```
@@ -346,7 +345,7 @@ Ejemplo: "los jerseys tienen un título".
 | ~~Límite de peticiones por IP~~ ✅ | `seguridad/LimitadorPeticiones` | Hecho. Login, registro y reenvío del correo; error `DEMASIADAS_PETICIONES` (429). Límites en `app.limites.*` |
 | ~~Panel de sospechosos~~ ✅ | `admin/AnalizadorSospechosos` | Hecho. `GET /api/admin/sospechosos`: ráfagas de registros/votos por IP, mismo favorito y papeletas idénticas. Falta la pantalla en el front |
 | Almacén SFTP | nuevo `imagen/AlmacenSftp.java` | Si ASIR monta SFTP en vez de FTP |
-| Decidir el sistema de votación | `voto/VotoService` | Ahora es "tipo Eurovisión" (6-5-4-3-2-1) |
+| ~~Decidir el sistema de votación~~ ✅ | `voto/VotoService` | Hecho. Sistema 3-2-1 (migración `V2__votacion_3_2_1.sql`) |
 | Despliegue | con ASIR | Java 21, servicio systemd, variables de `.env.example` |
 
 ### Cambios respecto al documento de diseño
@@ -354,4 +353,5 @@ Ejemplo: "los jerseys tienen un título".
 - **Verificación de email:** `GET /api/auth/verificar?token=…` activa la cuenta y **redirige** a `/verificacion.html?resultado=ok|caducado|invalido`. El front debe crear esa página.
 - **Eliminar jersey:** es `POST /api/admin/jerseys/{id}/eliminar` con `{"motivo": "…"}` (no `DELETE`), porque lleva un cuerpo con el motivo.
 - **Fase `PREPARACION`:** nueva, para antes de que empiece la subida o mientras el admin no ha puesto fechas.
-- **Sin mínimo de participantes:** si hay menos de 6 jerseys ajenos, se reparten solo las puntuaciones más altas (con 4 jerseys: 6, 5, 4 y 3).
+- **Sistema de votación 3-2-1:** cada usuario da 3 puntos a un jersey, 2 a otro y 1 a otro (antes era 6-5-4-3-2-1). Desempate en el ranking: más votos de 3, luego de 2, luego de 1.
+- **Sin mínimo de participantes:** si hay menos de 3 jerseys ajenos, se reparten solo las puntuaciones más altas (con 2 jerseys: 3 y 2; con 1: solo el 3).

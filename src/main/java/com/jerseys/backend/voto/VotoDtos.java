@@ -15,8 +15,8 @@ public final class VotoDtos {
     }
 
     /**
-     * Ejemplo de JSON que manda el front (sistema tipo Eurovisión):
-     * { "votos": [ {"jerseyId": 12, "puntos": 6}, {"jerseyId": 3, "puntos": 5}, ..., {"jerseyId": 8, "puntos": 1} ] }
+     * Ejemplo de JSON que manda el front (sistema 3-2-1):
+     * { "votos": [ {"jerseyId": 12, "puntos": 3}, {"jerseyId": 3, "puntos": 2}, {"jerseyId": 8, "puntos": 1} ] }
      */
     public record VotarRequest(
             @NotEmpty(message = "Debes enviar tus votos") @Valid List<VotoItem> votos
@@ -24,7 +24,7 @@ public final class VotoDtos {
 
     public record VotoItem(
             @NotNull Long jerseyId,
-            @NotNull @Min(1) @Max(6) Integer puntos
+            @NotNull @Min(1) @Max(VotoService.MAX_VOTOS) Integer puntos
     ) {}
 
     public record MiVotoResponse(Long jerseyId, String imagenUrl, int puntos, Instant fecha) {}

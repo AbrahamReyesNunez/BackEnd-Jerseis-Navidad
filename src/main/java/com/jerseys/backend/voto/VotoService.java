@@ -29,20 +29,21 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 /**
- * Reglas de votación (sistema "tipo Eurovisión", pendiente de confirmar por la clase):
+ * Reglas de votación (sistema 3-2-1, decidido por la clase):
  *  - Solo en fase VOTACION, y una única vez por usuario (no se puede rectificar).
- *  - Se reparten de golpe las puntuaciones 6, 5, 4, 3, 2 y 1 entre jerseys distintos.
+ *  - Se reparten de golpe 3 puntos a un jersey, 2 a otro y 1 a otro (jerseys distintos).
  *  - No se puede votar el propio jersey.
- *  - Si hay menos de 6 jerseys ajenos, se reparten solo las puntuaciones más altas
- *    (con 4 jerseys: 6, 5, 4 y 3).
+ *  - Si hay menos de 3 jerseys ajenos, se reparten solo las puntuaciones más altas
+ *    (con 2 jerseys: 3 y 2; con 1 jersey: solo el 3).
  *
- * Si la clase elige otro sistema, solo hay que cambiar esta clase (y quizá V2 de Flyway
- * para la restricción UNIQUE(usuario_id, puntos)).
+ * Para cambiar el número de puntos basta con MAX_VOTOS, pero hay que acompañarlo de una
+ * migración de Flyway que cambie la restricción CHECK de la tabla votos (ver V2).
  */
 @Service
 public class VotoService {
 
-    public static final int MAX_VOTOS = 6;
+    /** Cuántos votos reparte cada usuario y, a la vez, la puntuación más alta (3 → 3, 2, 1). */
+    public static final int MAX_VOTOS = 3;
 
     private final VotoRepository votos;
     private final JerseyRepository jerseys;
@@ -99,7 +100,7 @@ public class VotoService {
             }
         }
 
-        // Las puntuaciones deben ser exactamente las N más altas: {6, 5, 4, ...}
+        // Las puntuaciones deben ser exactamente las N más altas: {3, 2, 1}, {3, 2} o {3}
         Set<Integer> esperadas = IntStream.rangeClosed(MAX_VOTOS - votosNecesarios + 1, MAX_VOTOS)
                 .boxed().collect(Collectors.toSet());
         Set<Integer> recibidas = items.stream().map(VotoItem::puntos).collect(Collectors.toSet());
