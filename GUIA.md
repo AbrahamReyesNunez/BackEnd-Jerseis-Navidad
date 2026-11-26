@@ -85,17 +85,23 @@ const { maximo, activos, jerseys } = await r.json();
 // p. ej. "Te quedan 2 de 3" → maximo - activos. Los eliminados también vienen (estado ELIMINADO + motivo).
 ```
 
-**Subir la foto** (no es JSON: es un formulario con archivo):
+**Subir un jersey** (no es JSON: es un formulario con archivos). Foto de delante obligatoria y de detrás opcional:
 
 ```js
 const fd = new FormData();
-fd.append("foto", inputFile.files[0]);   // el campo DEBE llamarse "foto"
+fd.append("foto", inputDelante.files[0]);            // delante: el campo DEBE llamarse "foto"
+if (inputDetras.files[0]) {
+  fd.append("fotoTrasera", inputDetras.files[0]);    // detrás (opcional): "fotoTrasera"
+}
 const r = await fetch("/api/jerseys", {
   method: "POST",
   headers: { Authorization: "Bearer " + sessionStorage.getItem("token") },
   body: fd,                              // ¡sin Content-Type! el navegador lo pone solo
 });
+// Si la de detrás no vale, el mensaje empieza por "Foto de detrás: ..." y no se guarda ninguna de las dos.
 ```
+
+En las respuestas, `imagenUrl` es la foto de delante e `imagenTraseraUrl` la de detrás (`null` si no hay).
 
 **Registro con CAPTCHA** (Cloudflare Turnstile). El widget genera un token que hay que mandar en `captchaToken`:
 
@@ -113,7 +119,7 @@ const captchaToken = document.querySelector("[name='cf-turnstile-response']").va
 const r = await fetch("/api/auth/registro", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ email, nombre, password, aceptaPrivacidad, aceptaConsentimiento, mayorDe14, captchaToken }),
+  body: JSON.stringify({ email, nombre, password, aceptaPrivacidad, aceptaConsentimiento, mayorDe18, captchaToken }),
 });
 if (!r.ok) turnstile.reset();   // el token es de UN solo uso: si el registro falla, hay que generar otro
 ```
@@ -377,3 +383,5 @@ Ejemplo: "los jerseys tienen un título".
 - **Sin mínimo de participantes:** si hay menos de 3 jerseys ajenos, se reparten solo las puntuaciones más altas (con 2 jerseys: 3 y 2; con 1: solo el 3).
 - **Hasta 3 jerseys por persona** (antes, 1). Los eliminados por el admin no cuentan. `GET /api/jerseys/mio` pasa a ser `GET /api/jerseys/mios` y devuelve `{ maximo, activos, jerseys: [...] }` (lista vacía si no hay ninguno, ya no da 404). Si ya tienes 3: `409 LIMITE_DE_JERSEYS`. Migración `V3__tres_jerseys_por_usuario.sql`.
 - **Rol `JURADO` y 5 categorías de premio** (bases, apartado 5). `POPULAR` la vota todo el mundo, también el jurado, con el mismo peso. `DIVERTIDO`, `ORIGINAL`, `NAVIDENO` y `EXTRAVAGANTE` solo las vota el jurado, con el mismo sistema 3-2-1 y las mismas reglas, una vez por categoría (`/api/jurado/**`). El admin nombra jurado con `PATCH /api/admin/usuarios/{id}/rol` `{"rol":"JURADO"}`. Cada voto guarda su `categoria` (migración `V4__jurado_y_categorias.sql`). Ranking por categoría: `GET /api/ranking?categoria=...`. El panel de sospechosos solo analiza el voto popular.
+- **Dos fotos por jersey:** delante (`foto`, obligatoria) y detrás (`fotoTrasera`, opcional). Las dos pasan las mismas comprobaciones (formato, caras, contenido inapropiado); si una falla no se guarda ninguna. Las respuestas traen `imagenTraseraUrl` (`null` si no hay). Columna `jerseys.imagen_trasera_nombre` (migración `V5__foto_trasera_y_mayor_18.sql`).
+- **Solo mayores de 18:** la casilla del registro pasa de `mayorDe14` a `mayorDe18` ("Debes tener 18 años o más para participar"). En la BD, `mayor_14_confirmado` se sustituye por `mayor_18_confirmado`; las cuentas que ya existían quedan en `false`, porque confirmaron 14 y no 18 (migración V5).

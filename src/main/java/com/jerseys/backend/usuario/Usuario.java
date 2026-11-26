@@ -61,8 +61,9 @@ public class Usuario {
     @Column(name = "consentimiento_en", nullable = false)
     private Instant consentimientoEn;
 
-    @Column(name = "mayor_14_confirmado", nullable = false)
-    private boolean mayor14Confirmado;
+    /** El usuario marcó la casilla "tengo 18 años o más" al registrarse. */
+    @Column(name = "mayor_18_confirmado", nullable = false)
+    private boolean mayor18Confirmado;
 
     // JPA necesita un constructor vacío
     protected Usuario() {
@@ -76,12 +77,15 @@ public class Usuario {
         this.fechaRegistro = Instant.now();
     }
 
-    /** Guarda la prueba de que el usuario aceptó la política de privacidad y el consentimiento. */
+    /**
+     * Guarda la prueba de que el usuario aceptó la política de privacidad y el consentimiento,
+     * y confirmó ser mayor de 18 (el DTO de registro no deja llegar aquí sin las tres casillas).
+     */
     public void registrarConsentimiento(String versionPolitica, Instant momento) {
         this.privacidadAceptadaEn = momento;
         this.privacidadVersion = versionPolitica;
         this.consentimientoEn = momento;
-        this.mayor14Confirmado = true;
+        this.mayor18Confirmado = true;
     }
 
     public boolean puedeIniciarSesion() {

@@ -29,8 +29,10 @@ import java.util.stream.Collectors;
 @Service
 public class RankingService {
 
-    public record PosicionRanking(int posicion, Long jerseyId, String imagenUrl, String autor, int puntos,
-                                  int numeroVotos, Map<Integer, Integer> votosPorPuntuacion) {}
+    /** imagenTraseraUrl es null si el jersey no tiene foto de detrás. */
+    public record PosicionRanking(int posicion, Long jerseyId, String imagenUrl, String imagenTraseraUrl,
+                                  String autor, int puntos, int numeroVotos,
+                                  Map<Integer, Integer> votosPorPuntuacion) {}
 
     private final VotoRepository votos;
     private final JerseyRepository jerseys;
@@ -66,7 +68,8 @@ public class RankingService {
         for (int i = 0; i < filas.size(); i++) {
             Fila f = filas.get(i);
             ranking.add(new PosicionRanking(i + 1, f.jersey().getId(), jerseyService.url(f.jersey()),
-                    f.jersey().getUsuario().getNombre(), f.puntos(), f.votos().size(), f.desglose()));
+                    jerseyService.urlTrasera(f.jersey()), f.jersey().getUsuario().getNombre(), f.puntos(),
+                    f.votos().size(), f.desglose()));
         }
         return ranking;
     }

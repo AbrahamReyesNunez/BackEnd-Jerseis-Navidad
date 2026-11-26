@@ -56,8 +56,12 @@ public class JerseyService {
         this.reloj = reloj;
     }
 
+    /**
+     * Sube un jersey con su foto de delante (obligatoria) y, si se envía, la de detrás (opcional).
+     * Las dos pasan por las mismas comprobaciones (formato, caras, contenido inapropiado).
+     */
     @Transactional
-    public MiJerseyResponse subir(Long usuarioId, MultipartFile foto) {
+    public MiJerseyResponse subir(Long usuarioId, MultipartFile foto, MultipartFile fotoTrasera) {
         fases.exigir("subir jerseys", Fase.SUBIDA);
 
         // Bloqueamos la fila del usuario hasta el final de la transacción. Si sube dos fotos a la vez
@@ -71,18 +75,41 @@ public class JerseyService {
                     "Ya tienes " + MAX_JERSEYS_POR_USUARIO + " jerseys en el concurso, que es el máximo");
         }
 
-        byte[] jpg = procesador.procesar(foto);
-        // Nombre aleatorio: imposible de adivinar y sin datos del usuario
-        String nombre = UUID.randomUUID() + ".jpg";
-        almacen.guardar(nombre, jpg);
+        // Primero se comprueban LAS DOS fotos y solo después se guarda nada: si la de detrás no vale,
+        // no queremos haber dejado la de delante subida en el FTP.
+        byte[] delante = procesador.procesar(foto);
+        byte[] detras = hayArchivo(fotoTrasera) ? procesarTrasera(fotoTrasera) : null;
 
+        // Nombres aleatorios: imposibles de adivinar y sin datos del usuario
+        String nombreDelante = UUID.randomUUID() + ".jpg";
+        String nombreDetras = detras == null ? null : UUID.randomUUID() + ".jpg";
+        List<String> guardadas = new ArrayList<>();
         try {
-            Jersey jersey = jerseys.saveAndFlush(new Jersey(usuario, nombre, reloj.instant()));
+            almacen.guardar(nombreDelante, delante);
+            guardadas.add(nombreDelante);
+            if (detras != null) {
+                almacen.guardar(nombreDetras, detras);
+                guardadas.add(nombreDetras);
+            }
+            Jersey jersey = jerseys.saveAndFlush(new Jersey(usuario, nombreDelante, nombreDetras, reloj.instant()));
             return aMiJersey(jersey);
         } catch (RuntimeException e) {
-            // Si falla la BD, borramos la foto que ya habíamos subido para no dejar basura en el FTP
-            borrarSinFallar(nombre);
+            // Si falla algo (el FTP, la BD...), borramos lo que ya se hubiera subido para no dejar basura
+            guardadas.forEach(this::borrarSinFallar);
             throw e;
+        }
+    }
+
+    private static boolean hayArchivo(MultipartFile archivo) {
+        return archivo != null && !archivo.isEmpty();
+    }
+
+    /** Procesa la foto de detrás. Si no vale, el mensaje lo dice, para que el usuario sepa cuál cambiar. */
+    private byte[] procesarTrasera(MultipartFile fotoTrasera) {
+        try {
+            return procesador.procesar(fotoTrasera);
+        } catch (ApiException e) {
+            throw new ApiException(e.getEstado(), e.getCodigo(), "Foto de detrás: " + e.getMessage());
         }
     }
 
@@ -104,7 +131,7 @@ public class JerseyService {
         fases.exigir("ver los jerseys a votar", Fase.VOTACION, Fase.CERRADO);
         List<JerseyVotableResponse> lista = new ArrayList<>(
                 jerseys.findByEstadoOrderByFechaSubidaAsc(EstadoJersey.APROBADO).stream()
-                        .map(j -> new JerseyVotableResponse(j.getId(), url(j), j.esDe(usuarioId)))
+                        .map(j -> new JerseyVotableResponse(j.getId(), url(j), urlTrasera(j), j.esDe(usuarioId)))
                         .toList());
         Collections.shuffle(lista, new Random(usuarioId));
         return lista;
@@ -127,26 +154,38 @@ public class JerseyService {
 
         jersey.eliminar(usuarios.getReferenceById(adminId), motivo, reloj.instant());
         borrarSinFallar(jersey.getImagenNombre());
+        if (jersey.getImagenTraseraNombre() != null) {
+            borrarSinFallar(jersey.getImagenTraseraNombre());
+        }
 
         Usuario autor = jersey.getUsuario();
         correo.enviarJerseyEliminado(autor.getEmail(), autor.getNombre(), motivo, fase == Fase.SUBIDA);
         return aAdmin(jersey);
     }
 
+    /** URL pública de la foto de delante. */
     public String url(Jersey jersey) {
         return props.imagenes().urlBase() + jersey.getImagenNombre();
     }
 
+    /** URL pública de la foto de detrás, o null si el jersey no tiene. */
+    public String urlTrasera(Jersey jersey) {
+        return jersey.getImagenTraseraNombre() == null ? null
+                : props.imagenes().urlBase() + jersey.getImagenTraseraNombre();
+    }
+
     private MiJerseyResponse aMiJersey(Jersey j) {
-        String imagen = j.getEstado() == EstadoJersey.ELIMINADO ? null : url(j);
-        return new MiJerseyResponse(j.getId(), imagen, j.getEstado(), j.getMotivoEliminacion(), j.getFechaSubida());
+        boolean eliminado = j.getEstado() == EstadoJersey.ELIMINADO; // sus fotos ya se borraron
+        return new MiJerseyResponse(j.getId(), eliminado ? null : url(j), eliminado ? null : urlTrasera(j),
+                j.getEstado(), j.getMotivoEliminacion(), j.getFechaSubida());
     }
 
     private JerseyAdminResponse aAdmin(Jersey j) {
         Usuario u = j.getUsuario();
-        String imagen = j.getEstado() == EstadoJersey.ELIMINADO ? null : url(j);
-        return new JerseyAdminResponse(j.getId(), imagen, j.getEstado(), u.getId(), u.getNombre(), u.getEmail(),
-                j.getFechaSubida(), j.getMotivoEliminacion(), j.getFechaEliminacion());
+        boolean eliminado = j.getEstado() == EstadoJersey.ELIMINADO;
+        return new JerseyAdminResponse(j.getId(), eliminado ? null : url(j), eliminado ? null : urlTrasera(j),
+                j.getEstado(), u.getId(), u.getNombre(), u.getEmail(), j.getFechaSubida(),
+                j.getMotivoEliminacion(), j.getFechaEliminacion());
     }
 
     private void borrarSinFallar(String nombre) {

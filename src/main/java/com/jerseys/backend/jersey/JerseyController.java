@@ -31,15 +31,21 @@ public class JerseyController {
     }
 
     /**
-     * Subida de archivo: el front envía un formulario "multipart/form-data" con un campo "foto".
-     * En JS:  const fd = new FormData(); fd.append("foto", input.files[0]);
+     * Subida de archivos: el front envía un formulario "multipart/form-data" con el campo "foto"
+     * (delante, obligatoria) y, si quiere, "fotoTrasera" (detrás, opcional).
+     * En JS:  const fd = new FormData();
+     *         fd.append("foto", inputDelante.files[0]);
+     *         if (inputDetras.files[0]) fd.append("fotoTrasera", inputDetras.files[0]);
      *         fetch("/api/jerseys", { method: "POST", headers: { Authorization: "Bearer " + token }, body: fd })
      */
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @ResponseStatus(HttpStatus.CREATED)
-    @Operation(summary = "Sube un jersey (solo en fase SUBIDA, hasta 3 por persona; los eliminados no cuentan)")
-    public MiJerseyResponse subir(@AuthenticationPrincipal UsuarioActual yo, @RequestPart("foto") MultipartFile foto) {
-        return jerseyService.subir(yo.id(), foto);
+    @Operation(summary = "Sube un jersey: 'foto' (delante, obligatoria) y 'fotoTrasera' (detrás, opcional). "
+            + "Solo en fase SUBIDA, hasta 3 jerseys por persona; los eliminados no cuentan")
+    public MiJerseyResponse subir(@AuthenticationPrincipal UsuarioActual yo,
+                                  @RequestPart("foto") MultipartFile foto,
+                                  @RequestPart(value = "fotoTrasera", required = false) MultipartFile fotoTrasera) {
+        return jerseyService.subir(yo.id(), foto, fotoTrasera);
     }
 
     @GetMapping("/mios")

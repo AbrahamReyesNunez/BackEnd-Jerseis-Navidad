@@ -22,6 +22,8 @@ import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
@@ -34,6 +36,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
@@ -76,10 +79,18 @@ class FlujoCompletoTest {
         // ----- Registro: las casillas son obligatorias -----
         mvc.perform(post("/api/auth/registro").contentType(MediaType.APPLICATION_JSON).content("""
                         {"email":"sin@casillas.com","nombre":"Sin","password":"12345678",
-                         "aceptaPrivacidad":false,"aceptaConsentimiento":true,"mayorDe14":true}"""))
+                         "aceptaPrivacidad":false,"aceptaConsentimiento":true,"mayorDe18":true}"""))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.codigo").value("DATOS_INVALIDOS"))
                 .andExpect(jsonPath("$.campos.aceptaPrivacidad").exists());
+
+        // Hay que confirmar que se es mayor de 18
+        mvc.perform(post("/api/auth/registro").contentType(MediaType.APPLICATION_JSON).content("""
+                        {"email":"menor@test.com","nombre":"Menor","password":"12345678",
+                         "aceptaPrivacidad":true,"aceptaConsentimiento":true,"mayorDe18":false}"""))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.codigo").value("DATOS_INVALIDOS"))
+                .andExpect(jsonPath("$.campos.mayorDe18").value("Debes tener 18 años o más para participar"));
 
         // Correos temporales (de usar y tirar) → 400
         mvc.perform(post("/api/auth/registro").contentType(MediaType.APPLICATION_JSON)
@@ -120,8 +131,28 @@ class FlujoCompletoTest {
                 ahora.plus(2, ChronoUnit.HOURS), ahora.plus(3, ChronoUnit.HOURS));
         mvc.perform(get("/api/fase")).andExpect(jsonPath("$.fase").value("SUBIDA"));
 
-        long jerseyAna = subirJersey(ana);
+        // Ana sube su jersey con las dos fotos (delante y detrás); Carla, solo con la de delante
+        MvcResult conDosFotos = mvc.perform(multipart("/api/jerseys").file(fotoPng()).file(fotoPng("fotoTrasera"))
+                        .header("Authorization", "Bearer " + ana))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.imagenUrl").isNotEmpty())
+                .andExpect(jsonPath("$.imagenTraseraUrl").isNotEmpty())
+                .andReturn();
+        long jerseyAna = ((Number) JsonPath.read(conDosFotos.getResponse().getContentAsString(), "$.id")).longValue();
         long jerseyCarla = subirJersey(carla);
+        mvc.perform(get("/api/jerseys/mios").header("Authorization", "Bearer " + carla))
+                .andExpect(jsonPath("$.jerseys[0].imagenTraseraUrl").value(nullValue()));
+
+        // Si la foto de detrás no vale, no se guarda NADA (ni la de delante) y el mensaje dice cuál falla
+        long archivosAntes = archivosSubidos();
+        var traseraFalsa = new MockMultipartFile("fotoTrasera", "detras.png", "image/png", "no soy una imagen".getBytes());
+        mvc.perform(multipart("/api/jerseys").file(fotoPng()).file(traseraFalsa).header("Authorization", "Bearer " + admin))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.codigo").value("FORMATO_NO_VALIDO"))
+                .andExpect(jsonPath("$.mensaje").value("Foto de detrás: La foto debe ser JPG o PNG"));
+        mvc.perform(get("/api/jerseys/mios").header("Authorization", "Bearer " + admin))
+                .andExpect(jsonPath("$.activos").value(0));
+        assertThat(archivosSubidos()).isEqualTo(archivosAntes);
         // Beto sube los 3 que se permiten
         long jerseyBeto1 = subirJersey(beto);
         long jerseyBeto2 = subirJersey(beto);
@@ -410,7 +441,7 @@ class FlujoCompletoTest {
     private String cuerpoRegistro(String email, String nombre) {
         return """
                 {"email":"%s","nombre":"%s","password":"password123",
-                 "aceptaPrivacidad":true,"aceptaConsentimiento":true,"mayorDe14":true}""".formatted(email, nombre);
+                 "aceptaPrivacidad":true,"aceptaConsentimiento":true,"mayorDe18":true}""".formatted(email, nombre);
     }
 
     /** El id del usuario dueño de un token. */
@@ -473,8 +504,13 @@ class FlujoCompletoTest {
         return sb.append("]}").toString();
     }
 
-    /** Genera en memoria una imagen PNG de 400x300 con transparencia. */
+    /** Foto de delante (campo "foto"). */
     private static MockMultipartFile fotoPng() throws IOException {
+        return fotoPng("foto");
+    }
+
+    /** Genera en memoria una imagen PNG de 400x300 con transparencia, en el campo del formulario indicado. */
+    private static MockMultipartFile fotoPng(String campo) throws IOException {
         BufferedImage img = new BufferedImage(400, 300, BufferedImage.TYPE_INT_ARGB);
         Graphics2D g = img.createGraphics();
         g.setColor(Color.RED);
@@ -482,6 +518,17 @@ class FlujoCompletoTest {
         g.dispose();
         ByteArrayOutputStream salida = new ByteArrayOutputStream();
         ImageIO.write(img, "png", salida);
-        return new MockMultipartFile("foto", "jersey.png", "image/png", salida.toByteArray());
+        return new MockMultipartFile(campo, "jersey.png", "image/png", salida.toByteArray());
+    }
+
+    /** Cuántas fotos hay guardadas en la carpeta de los tests (app.imagenes.directorio-local). */
+    private static long archivosSubidos() throws IOException {
+        Path carpeta = Path.of("target", "imagenes-test");
+        if (!Files.exists(carpeta)) {
+            return 0;
+        }
+        try (var archivos = Files.list(carpeta)) {
+            return archivos.count();
+        }
     }
 }
