@@ -1,0 +1,18 @@
+# PostgreSQL para desarrollo, para quien tenga Docker instalado.
+# Arrancar:  docker compose up -d      Parar:  docker compose down
+# Los datos se guardan en el volumen "datos-postgres" y sobreviven a los reinicios.
+services:
+  postgres:
+    image: postgres:17
+    container_name: jerseys-postgres
+    environment:
+      POSTGRES_DB: jerseys
+      POSTGRES_USER: jerseys
+      POSTGRES_PASSWORD: jerseys
+    ports:
+      - "5432:5432"
+    volumes:
+      - datos-postgres:/var/lib/postgresql/data
+
+volumes:
+  datos-postgres:
