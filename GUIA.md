@@ -48,6 +48,7 @@ Y el backend responde con un **código de estado** y, normalmente, un JSON:
 | 403 Forbidden | Sesión iniciada pero no puedes | Un usuario pide el ranking; fase incorrecta |
 | 404 Not Found | No existe | No has subido jersey |
 | 409 Conflict | Choca con algo que ya existe | Ya has votado, ya has subido |
+| 429 Too Many Requests | Demasiadas peticiones seguidas | Muchos intentos de login desde la misma IP |
 
 **Todos los errores** tienen el mismo formato, así el front puede mostrar el mensaje directamente:
 
@@ -319,7 +320,7 @@ Ejemplo: "los jerseys tienen un título".
 | Detección de contenido obsceno | `imagen/DetectorContenidoInapropiado.java` | ONNX Runtime + modelo NSFW |
 | CAPTCHA en el registro | `auth/AuthService.registrar` | Cloudflare Turnstile |
 | ~~Bloquear correos temporales~~ ✅ | `auth/DetectorCorreoTemporal` | Hecho. Lista en `resources/correos-temporales.txt`; error `EMAIL_TEMPORAL` (400) |
-| Límite de peticiones por IP | nuevo filtro | Bucket4j (registro y login) |
+| ~~Límite de peticiones por IP~~ ✅ | `seguridad/LimitadorPeticiones` | Hecho. Login, registro y reenvío del correo; error `DEMASIADAS_PETICIONES` (429). Límites en `app.limites.*` |
 | Panel de sospechosos | `admin/AdminController` | Agrupar por `ipHash`, detectar ráfagas |
 | Almacén SFTP | nuevo `imagen/AlmacenSftp.java` | Si ASIR monta SFTP en vez de FTP |
 | Decidir el sistema de votación | `voto/VotoService` | Ahora es "tipo Eurovisión" (6-5-4-3-2-1) |

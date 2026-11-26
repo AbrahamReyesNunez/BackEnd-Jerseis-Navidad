@@ -12,6 +12,7 @@ import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.test.web.servlet.request.RequestPostProcessor;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
@@ -181,6 +182,27 @@ class FlujoCompletoTest {
     }
 
     @Test
+    void demasiadosLoginsDesdeLaMismaIpDan429() throws Exception {
+        String cuerpo = "{\"email\":\"nadie@test.com\",\"password\":\"probando123\"}";
+        // Una IP inventada, para no gastar los intentos de 127.0.0.1 que usan los demás tests
+        int limite = 30; // app.limites.login.capacidad en application-test.properties
+        for (int i = 0; i < limite; i++) {
+            mvc.perform(post("/api/auth/login").with(desdeIp("203.0.113.7"))
+                            .contentType(MediaType.APPLICATION_JSON).content(cuerpo))
+                    .andExpect(status().isUnauthorized());
+        }
+        mvc.perform(post("/api/auth/login").with(desdeIp("203.0.113.7"))
+                        .contentType(MediaType.APPLICATION_JSON).content(cuerpo))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.codigo").value("DEMASIADAS_PETICIONES"));
+
+        // Otra IP sigue pudiendo intentarlo
+        mvc.perform(post("/api/auth/login").with(desdeIp("203.0.113.8"))
+                        .contentType(MediaType.APPLICATION_JSON).content(cuerpo))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
     void swaggerPublicaElContratoDeLaApi() throws Exception {
         mvc.perform(get("/v3/api-docs"))
                 .andExpect(status().isOk())
@@ -189,6 +211,14 @@ class FlujoCompletoTest {
     }
 
     // ===================== Ayudantes =====================
+
+    /** Simula que la petición llega desde otra IP. */
+    private static RequestPostProcessor desdeIp(String ip) {
+        return peticion -> {
+            peticion.setRemoteAddr(ip);
+            return peticion;
+        };
+    }
 
     private String cuerpoRegistro(String email, String nombre) {
         return """

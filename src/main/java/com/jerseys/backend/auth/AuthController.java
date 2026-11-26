@@ -9,6 +9,8 @@ import com.jerseys.backend.auth.dto.AuthDtos.UsuarioResponse;
 import com.jerseys.backend.comun.ApiException;
 import com.jerseys.backend.comun.DatosCliente;
 import com.jerseys.backend.config.AppProperties;
+import com.jerseys.backend.seguridad.LimitadorPeticiones;
+import com.jerseys.backend.seguridad.LimitadorPeticiones.Accion;
 import com.jerseys.backend.seguridad.UsuarioActual;
 import com.jerseys.backend.usuario.UsuarioRepository;
 import io.swagger.v3.oas.annotations.Operation;
@@ -46,18 +48,23 @@ public class AuthController {
     private final AuthService authService;
     private final UsuarioRepository usuarios;
     private final AppProperties props;
+    private final LimitadorPeticiones limitador;
 
-    public AuthController(AuthService authService, UsuarioRepository usuarios, AppProperties props) {
+    public AuthController(AuthService authService, UsuarioRepository usuarios, AppProperties props,
+                          LimitadorPeticiones limitador) {
         this.authService = authService;
         this.usuarios = usuarios;
         this.props = props;
+        this.limitador = limitador;
     }
 
     @PostMapping("/registro")
     @ResponseStatus(HttpStatus.CREATED)
-    @Operation(summary = "Crea una cuenta (inactiva) y envía el correo de verificación")
+    @Operation(summary = "Crea una cuenta (inactiva) y envía el correo de verificación. 429 si hay demasiados intentos")
     public MensajeResponse registro(@Valid @RequestBody RegistroRequest datos, HttpServletRequest peticion) {
-        authService.registrar(datos, DatosCliente.de(peticion));
+        DatosCliente cliente = DatosCliente.de(peticion);
+        limitador.comprobar(Accion.REGISTRO, cliente.ip());
+        authService.registrar(datos, cliente);
         return new MensajeResponse("Cuenta creada. Revisa tu correo para activarla.");
     }
 
@@ -77,14 +84,16 @@ public class AuthController {
 
     @PostMapping("/reenviar-verificacion")
     @Operation(summary = "Reenvía el correo de verificación (si la cuenta existe y no está verificada)")
-    public MensajeResponse reenviar(@Valid @RequestBody ReenviarRequest datos) {
+    public MensajeResponse reenviar(@Valid @RequestBody ReenviarRequest datos, HttpServletRequest peticion) {
+        limitador.comprobar(Accion.REENVIAR_VERIFICACION, DatosCliente.de(peticion).ip());
         authService.reenviarVerificacion(datos.email());
         return new MensajeResponse("Si la cuenta existe y no está verificada, te hemos enviado otro correo.");
     }
 
     @PostMapping("/login")
-    @Operation(summary = "Devuelve un JWT para usar en la cabecera Authorization: Bearer <token>")
-    public LoginResponse login(@Valid @RequestBody LoginRequest datos) {
+    @Operation(summary = "Devuelve un JWT para usar en la cabecera Authorization: Bearer <token>. 429 si hay demasiados intentos")
+    public LoginResponse login(@Valid @RequestBody LoginRequest datos, HttpServletRequest peticion) {
+        limitador.comprobar(Accion.LOGIN, DatosCliente.de(peticion).ip());
         return authService.login(datos);
     }
 
