@@ -1,6 +1,8 @@
 package com.jerseys.backend.usuario;
 
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 
 import java.util.List;
@@ -22,6 +24,15 @@ public interface UsuarioRepository extends JpaRepository<Usuario, Long> {
     boolean existsByEmailNormalizado(String emailNormalizado);
 
     boolean existsByRol(Rol rol);
+
+    /**
+     * Carga el usuario y BLOQUEA su fila hasta que termine la transacción (SELECT ... FOR UPDATE).
+     * Si llega otra petición del mismo usuario que también lo pide, espera su turno.
+     * Lo usa JerseyService para que dos subidas a la vez no superen el máximo de jerseys.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT u FROM Usuario u WHERE u.id = :id")
+    Optional<Usuario> findByIdBloqueando(Long id);
 
     @Query("""
             SELECT u FROM Usuario u

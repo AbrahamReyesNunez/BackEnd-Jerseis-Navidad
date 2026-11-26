@@ -4,15 +4,22 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
 import java.time.Instant;
+import java.util.List;
 
 public final class JerseyDtos {
 
     private JerseyDtos() {
     }
 
-    /** Lo que ve cada usuario de SU propio jersey. */
+    /** Lo que ve cada usuario de cada uno de SUS jerseys. */
     public record MiJerseyResponse(Long id, String imagenUrl, EstadoJersey estado, String motivoEliminacion,
                                    Instant fechaSubida) {}
+
+    /**
+     * "Mis jerseys": todos los que ha subido el usuario (también los eliminados, para que vea el motivo).
+     * El front puede usar maximo y activos para mostrar "Te quedan X por subir".
+     */
+    public record MisJerseysResponse(int maximo, int activos, List<MiJerseyResponse> jerseys) {}
 
     /**
      * Jersey en la lista de votación. Es anónimo a propósito (no dice de quién es),

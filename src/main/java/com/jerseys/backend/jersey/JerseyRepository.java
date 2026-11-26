@@ -4,15 +4,14 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 
 import java.util.List;
-import java.util.Optional;
 
 public interface JerseyRepository extends JpaRepository<Jersey, Long> {
 
-    /** El jersey activo (no eliminado) de un usuario, si lo tiene. */
-    Optional<Jersey> findFirstByUsuarioIdAndEstadoNot(Long usuarioId, EstadoJersey estado);
+    /** Cuántos jerseys tiene un usuario que NO estén en ese estado (p. ej. no eliminados). */
+    long countByUsuarioIdAndEstadoNot(Long usuarioId, EstadoJersey estado);
 
-    /** El jersey más reciente del usuario, esté como esté (para "mi jersey"). */
-    Optional<Jersey> findFirstByUsuarioIdOrderByFechaSubidaDesc(Long usuarioId);
+    /** Todos los jerseys del usuario, el más reciente primero (para "mis jerseys"). */
+    List<Jersey> findByUsuarioIdOrderByFechaSubidaDesc(Long usuarioId);
 
     List<Jersey> findByEstadoOrderByFechaSubidaAsc(EstadoJersey estado);
 

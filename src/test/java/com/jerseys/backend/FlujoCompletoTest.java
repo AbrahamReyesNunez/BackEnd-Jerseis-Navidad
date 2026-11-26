@@ -26,6 +26,12 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
@@ -98,7 +104,14 @@ class FlujoCompletoTest {
                 .andExpect(jsonPath("$.codigo").value("CUENTA_NO_VERIFICADA"));
 
         // Sin token, las rutas protegidas responden 401
-        mvc.perform(get("/api/jerseys/mio")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/api/jerseys/mios")).andExpect(status().isUnauthorized());
+
+        // Sin jerseys todavía: lista vacía (no 404)
+        mvc.perform(get("/api/jerseys/mios").header("Authorization", "Bearer " + ana))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.maximo").value(3))
+                .andExpect(jsonPath("$.activos").value(0))
+                .andExpect(jsonPath("$.jerseys").isEmpty());
 
         // ----- Fase de SUBIDA -----
         Instant ahora = Instant.now();
@@ -107,13 +120,27 @@ class FlujoCompletoTest {
         mvc.perform(get("/api/fase")).andExpect(jsonPath("$.fase").value("SUBIDA"));
 
         long jerseyAna = subirJersey(ana);
-        long jerseyBeto = subirJersey(beto);
         long jerseyCarla = subirJersey(carla);
+        // Beto sube los 3 que se permiten
+        long jerseyBeto1 = subirJersey(beto);
+        long jerseyBeto2 = subirJersey(beto);
+        long jerseyBeto3 = subirJersey(beto);
 
-        // Un segundo jersey → 409
-        mvc.perform(multipart("/api/jerseys").file(fotoPng()).header("Authorization", "Bearer " + ana))
+        // Un cuarto jersey → 409
+        mvc.perform(multipart("/api/jerseys").file(fotoPng()).header("Authorization", "Bearer " + beto))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.codigo").value("YA_HAS_SUBIDO"));
+                .andExpect(jsonPath("$.codigo").value("LIMITE_DE_JERSEYS"));
+
+        // Los eliminados no cuentan: si el admin le retira uno, Beto puede subir otro
+        mvc.perform(post("/api/admin/jerseys/" + jerseyBeto3 + "/eliminar").header("Authorization", "Bearer " + admin)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"motivo\":\"Foto borrosa\"}"))
+                .andExpect(status().isOk());
+        long jerseyBeto4 = subirJersey(beto);
+        mvc.perform(get("/api/jerseys/mios").header("Authorization", "Bearer " + beto))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.activos").value(3))
+                .andExpect(jsonPath("$.jerseys.length()").value(4))
+                .andExpect(jsonPath("$.jerseys[?(@.estado == 'ELIMINADO')].motivoEliminacion").value("Foto borrosa"));
 
         // Un archivo que no es una imagen → 400
         var falso = new MockMultipartFile("foto", "virus.png", "image/png", "no soy una imagen".getBytes());
@@ -133,49 +160,60 @@ class FlujoCompletoTest {
         MvcResult lista = mvc.perform(get("/api/jerseys").header("Authorization", "Bearer " + ana))
                 .andExpect(status().isOk())
                 .andReturn();
+        // 5 jerseys en concurso (Ana 1, Carla 1, Beto 3; el eliminado no sale)
         List<Boolean> propios = JsonPath.read(lista.getResponse().getContentAsString(), "$[*].esPropio");
-        assertThat(propios).hasSize(3).containsOnlyOnce(true);
+        assertThat(propios).hasSize(5).containsOnlyOnce(true);
+        MvcResult listaBeto = mvc.perform(get("/api/jerseys").header("Authorization", "Bearer " + beto)).andReturn();
+        List<Boolean> propiosBeto = JsonPath.read(listaBeto.getResponse().getContentAsString(), "$[*].esPropio");
+        assertThat(propiosBeto).filteredOn(p -> p).hasSize(3);
 
         // Votarse a sí misma → 400
         mvc.perform(post("/api/votos").header("Authorization", "Bearer " + ana)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(votos(Map.of(jerseyAna, 3, jerseyBeto, 2))))
+                        .content(votos(Map.of(jerseyAna, 3, jerseyBeto1, 2, jerseyCarla, 1))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.codigo").value("VOTO_PROPIO"));
+
+        // Beto tampoco puede votar NINGUNO de sus 3 jerseys
+        mvc.perform(post("/api/votos").header("Authorization", "Bearer " + beto)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(votos(Map.of(jerseyBeto2, 3, jerseyAna, 2))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.codigo").value("VOTO_PROPIO"));
 
         // Más de 3 puntos (el sistema antiguo 6-5-4...) → 400
         mvc.perform(post("/api/votos").header("Authorization", "Bearer " + ana)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(votos(Map.of(jerseyBeto, 6, jerseyCarla, 5))))
+                        .content(votos(Map.of(jerseyBeto1, 6, jerseyCarla, 5, jerseyBeto2, 4))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.codigo").value("DATOS_INVALIDOS"));
 
-        // Con 2 jerseys ajenos solo se puede repartir 3 y 2: el 1 sobra
-        mvc.perform(post("/api/votos").header("Authorization", "Bearer " + ana)
+        // Beto solo tiene 2 jerseys ajenos: solo puede repartir 3 y 2, el 1 sobra
+        mvc.perform(post("/api/votos").header("Authorization", "Bearer " + beto)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(votos(Map.of(jerseyBeto, 2, jerseyCarla, 1))))
+                        .content(votos(Map.of(jerseyAna, 2, jerseyCarla, 1))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.codigo").value("PUNTOS_INCORRECTOS"));
 
         mvc.perform(post("/api/votos").header("Authorization", "Bearer " + ana)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(votos(Map.of(jerseyBeto, 3, jerseyCarla, 2))))
+                        .content(votos(Map.of(jerseyBeto1, 3, jerseyCarla, 2, jerseyBeto2, 1))))
                 .andExpect(status().isCreated());
 
         // Votar otra vez → 409
         mvc.perform(post("/api/votos").header("Authorization", "Bearer " + ana)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(votos(Map.of(jerseyBeto, 3, jerseyCarla, 2))))
+                        .content(votos(Map.of(jerseyBeto1, 3, jerseyCarla, 2, jerseyBeto2, 1))))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.codigo").value("YA_HAS_VOTADO"));
 
         mvc.perform(post("/api/votos").header("Authorization", "Bearer " + carla)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(votos(Map.of(jerseyBeto, 3, jerseyAna, 2))))
+                        .content(votos(Map.of(jerseyBeto1, 3, jerseyAna, 2, jerseyBeto4, 1))))
                 .andExpect(status().isCreated());
 
         // En votación el admin ya no puede eliminar fotos
-        mvc.perform(post("/api/admin/jerseys/" + jerseyBeto + "/eliminar").header("Authorization", "Bearer " + admin)
+        mvc.perform(post("/api/admin/jerseys/" + jerseyBeto1 + "/eliminar").header("Authorization", "Bearer " + admin)
                         .contentType(MediaType.APPLICATION_JSON).content("{\"motivo\":\"prueba\"}"))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.codigo").value("FASE_INCORRECTA"));
@@ -186,10 +224,11 @@ class FlujoCompletoTest {
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.codigo").value("SIN_PERMISO"));
 
-        // El admin sí: Beto gana con 6 puntos (3 + 3)
+        // El admin sí: el primer jersey de Beto gana con 6 puntos (3 + 3)
         mvc.perform(get("/api/ranking").header("Authorization", "Bearer " + admin))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].jerseyId").value(jerseyBeto))
+                .andExpect(jsonPath("$.length()").value(5))
+                .andExpect(jsonPath("$[0].jerseyId").value(jerseyBeto1))
                 .andExpect(jsonPath("$[0].puntos").value(6))
                 .andExpect(jsonPath("$[0].autor").value("Beto"));
 
@@ -224,6 +263,54 @@ class FlujoCompletoTest {
         mvc.perform(post("/api/auth/login").with(desdeIp("203.0.113.8"))
                         .contentType(MediaType.APPLICATION_JSON).content(cuerpo))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void dosSubidasALaVezNoSuperanElMaximo() throws Exception {
+        String admin = login("admin@test.local", "admin12345");
+        Instant ahora = Instant.now();
+        cambiarFechas(admin, ahora.minus(1, ChronoUnit.HOURS), ahora.plus(1, ChronoUnit.HOURS),
+                ahora.plus(2, ChronoUnit.HOURS), ahora.plus(3, ChronoUnit.HOURS));
+
+        // Usuario propio de este test, registrado desde otra IP para no mezclarse con los demás tests
+        mvc.perform(post("/api/auth/registro").with(desdeIp("198.51.100.9")).contentType(MediaType.APPLICATION_JSON)
+                        .content(cuerpoRegistro("dani@test.com", "Dani")))
+                .andExpect(status().isCreated());
+        String tokenEmail = tokens.findFirstByUsuarioEmailOrderByIdDesc("dani@test.com").orElseThrow().getToken();
+        mvc.perform(get("/api/auth/verificar").param("token", tokenEmail)).andExpect(status().isFound());
+        String dani = login("dani@test.com", "password123");
+
+        long primero = subirJersey(dani);
+        long segundo = subirJersey(dani);
+
+        // Le queda UN hueco y manda DOS fotos a la vez (doble clic, dos pestañas...)
+        ExecutorService hilos = Executors.newFixedThreadPool(2);
+        CountDownLatch salida = new CountDownLatch(1);
+        Callable<Integer> subida = () -> {
+            salida.await(); // los dos hilos arrancan a la vez
+            return mvc.perform(multipart("/api/jerseys").file(fotoPng()).header("Authorization", "Bearer " + dani))
+                    .andReturn().getResponse().getStatus();
+        };
+        Future<Integer> a = hilos.submit(subida);
+        Future<Integer> b = hilos.submit(subida);
+        salida.countDown();
+        List<Integer> estados = List.of(a.get(60, TimeUnit.SECONDS), b.get(60, TimeUnit.SECONDS));
+        hilos.shutdown();
+
+        // Exactamente una entra (201) y la otra se rechaza (409)
+        assertThat(estados).containsExactlyInAnyOrder(201, 409);
+        mvc.perform(get("/api/jerseys/mios").header("Authorization", "Bearer " + dani))
+                .andExpect(jsonPath("$.activos").value(3));
+
+        // Limpieza: retiramos los jerseys de Dani para que no cuenten en el concurso de los otros tests
+        MvcResult mios = mvc.perform(get("/api/jerseys/mios").header("Authorization", "Bearer " + dani)).andReturn();
+        List<Number> ids = JsonPath.read(mios.getResponse().getContentAsString(), "$.jerseys[*].id");
+        assertThat(ids).extracting(Number::longValue).contains(primero, segundo);
+        for (Number id : ids) {
+            mvc.perform(post("/api/admin/jerseys/" + id + "/eliminar").header("Authorization", "Bearer " + admin)
+                            .contentType(MediaType.APPLICATION_JSON).content("{\"motivo\":\"limpieza del test\"}"))
+                    .andExpect(status().isOk());
+        }
     }
 
     @Test

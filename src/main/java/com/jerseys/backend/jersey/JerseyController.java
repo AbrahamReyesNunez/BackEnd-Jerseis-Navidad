@@ -2,6 +2,7 @@ package com.jerseys.backend.jersey;
 
 import com.jerseys.backend.jersey.JerseyDtos.JerseyVotableResponse;
 import com.jerseys.backend.jersey.JerseyDtos.MiJerseyResponse;
+import com.jerseys.backend.jersey.JerseyDtos.MisJerseysResponse;
 import com.jerseys.backend.seguridad.UsuarioActual;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -20,7 +21,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/jerseys")
-@Tag(name = "Jerseys", description = "Subir tu jersey y ver los del concurso")
+@Tag(name = "Jerseys", description = "Subir tus jerseys (hasta 3) y ver los del concurso")
 public class JerseyController {
 
     private final JerseyService jerseyService;
@@ -36,15 +37,15 @@ public class JerseyController {
      */
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @ResponseStatus(HttpStatus.CREATED)
-    @Operation(summary = "Sube tu jersey (solo en fase SUBIDA, uno por persona)")
+    @Operation(summary = "Sube un jersey (solo en fase SUBIDA, hasta 3 por persona; los eliminados no cuentan)")
     public MiJerseyResponse subir(@AuthenticationPrincipal UsuarioActual yo, @RequestPart("foto") MultipartFile foto) {
         return jerseyService.subir(yo.id(), foto);
     }
 
-    @GetMapping("/mio")
-    @Operation(summary = "Tu jersey y su estado")
-    public MiJerseyResponse mio(@AuthenticationPrincipal UsuarioActual yo) {
-        return jerseyService.miJersey(yo.id());
+    @GetMapping("/mios")
+    @Operation(summary = "Tus jerseys y su estado, el más reciente primero (lista vacía si no has subido ninguno)")
+    public MisJerseysResponse mios(@AuthenticationPrincipal UsuarioActual yo) {
+        return jerseyService.misJerseys(yo.id());
     }
 
     @GetMapping
