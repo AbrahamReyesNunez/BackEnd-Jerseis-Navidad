@@ -95,6 +95,29 @@ const r = await fetch("/api/jerseys", {
 });
 ```
 
+**Registro con CAPTCHA** (Cloudflare Turnstile). El widget genera un token que hay que mandar en `captchaToken`:
+
+```html
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+<form id="registro">
+  <!-- ... email, nombre, password, casillas ... -->
+  <div class="cf-turnstile" data-sitekey="LA_SITEKEY_PUBLICA"></div>
+  <button>Registrarme</button>
+</form>
+```
+
+```js
+const captchaToken = document.querySelector("[name='cf-turnstile-response']").value;
+const r = await fetch("/api/auth/registro", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ email, nombre, password, aceptaPrivacidad, aceptaConsentimiento, mayorDe14, captchaToken }),
+});
+if (!r.ok) turnstile.reset();   // el token es de UN solo uso: si el registro falla, hay que generar otro
+```
+
+Para probar en local, usad la sitekey de prueba `1x00000000000000000000AA` (siempre aprueba). En el backend el CAPTCHA está desactivado en el perfil `dev`; para probarlo de verdad, poned `app.captcha.activado=true` en `application-dev.properties`.
+
 **Votar** (los 6 de golpe):
 
 ```js
@@ -318,7 +341,7 @@ Ejemplo: "los jerseys tienen un título".
 | --- | --- | --- |
 | Detección de caras con OpenCV | `imagen/DetectorCaras.java` | Instrucciones en el comentario `TODO` |
 | Detección de contenido obsceno | `imagen/DetectorContenidoInapropiado.java` | ONNX Runtime + modelo NSFW |
-| CAPTCHA en el registro | `auth/AuthService.registrar` | Cloudflare Turnstile |
+| ~~CAPTCHA en el registro~~ ✅ | `auth/VerificadorCaptcha` | Hecho. Campo `captchaToken`; errores `CAPTCHA_OBLIGATORIO`/`CAPTCHA_INVALIDO` (400) y `CAPTCHA_NO_DISPONIBLE` (503). Falta crear el widget en Cloudflare |
 | ~~Bloquear correos temporales~~ ✅ | `auth/DetectorCorreoTemporal` | Hecho. Lista en `resources/correos-temporales.txt`; error `EMAIL_TEMPORAL` (400) |
 | ~~Límite de peticiones por IP~~ ✅ | `seguridad/LimitadorPeticiones` | Hecho. Login, registro y reenvío del correo; error `DEMASIADAS_PETICIONES` (429). Límites en `app.limites.*` |
 | Panel de sospechosos | `admin/AdminController` | Agrupar por `ipHash`, detectar ráfagas |

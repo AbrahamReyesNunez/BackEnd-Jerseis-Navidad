@@ -20,7 +20,8 @@ public record AppProperties(
         Correo correo,
         Cors cors,
         Imagenes imagenes,
-        Limites limites
+        Limites limites,
+        Captcha captcha
 ) {
     public record Jwt(String secreto, int expiracionHoras) {}
 
@@ -43,4 +44,7 @@ public record AppProperties(
 
     /** Como máximo "capacidad" peticiones cada "periodo" (p. ej. 30 cada 1m). */
     public record Limite(int capacidad, Duration periodo) {}
+
+    /** CAPTCHA del registro (Cloudflare Turnstile). Ver VerificadorCaptcha. */
+    public record Captcha(boolean activado, String secreto) {}
 }

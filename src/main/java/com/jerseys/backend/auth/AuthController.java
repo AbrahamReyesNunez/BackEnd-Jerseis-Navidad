@@ -49,21 +49,27 @@ public class AuthController {
     private final UsuarioRepository usuarios;
     private final AppProperties props;
     private final LimitadorPeticiones limitador;
+    private final VerificadorCaptcha captcha;
 
     public AuthController(AuthService authService, UsuarioRepository usuarios, AppProperties props,
-                          LimitadorPeticiones limitador) {
+                          LimitadorPeticiones limitador, VerificadorCaptcha captcha) {
         this.authService = authService;
         this.usuarios = usuarios;
         this.props = props;
         this.limitador = limitador;
+        this.captcha = captcha;
     }
 
     @PostMapping("/registro")
     @ResponseStatus(HttpStatus.CREATED)
-    @Operation(summary = "Crea una cuenta (inactiva) y envía el correo de verificación. 429 si hay demasiados intentos")
+    @Operation(summary = "Crea una cuenta (inactiva) y envía el correo de verificación. "
+            + "Necesita captchaToken (Cloudflare Turnstile). 429 si hay demasiados intentos")
     public MensajeResponse registro(@Valid @RequestBody RegistroRequest datos, HttpServletRequest peticion) {
         DatosCliente cliente = DatosCliente.de(peticion);
         limitador.comprobar(Accion.REGISTRO, cliente.ip());
+        // Fuera de la transacción de registrar(): así no ocupamos una conexión a la BD
+        // mientras esperamos a Cloudflare.
+        captcha.comprobar(datos.captchaToken());
         authService.registrar(datos, cliente);
         return new MensajeResponse("Cuenta creada. Revisa tu correo para activarla.");
     }

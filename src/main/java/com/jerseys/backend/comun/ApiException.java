@@ -43,6 +43,10 @@ public class ApiException extends RuntimeException {
         return new ApiException(HttpStatus.TOO_MANY_REQUESTS, codigo, mensaje);
     }
 
+    public static ApiException servicioNoDisponible(String codigo, String mensaje) {
+        return new ApiException(HttpStatus.SERVICE_UNAVAILABLE, codigo, mensaje);
+    }
+
     public HttpStatus getEstado() { return estado; }
     public String getCodigo() { return codigo; }
 }

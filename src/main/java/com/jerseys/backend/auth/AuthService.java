@@ -74,7 +74,7 @@ public class AuthService {
         if (usuarios.existsByEmailNormalizado(normalizado)) {
             throw ApiException.conflicto("EMAIL_YA_REGISTRADO", "Ya existe una cuenta con ese email");
         }
-        // TODO (equipo antifraude): comprobar el CAPTCHA.
+        // El CAPTCHA se comprueba antes, en AuthController (fuera de la transacción).
 
         Usuario usuario = new Usuario(datos.email().trim(), normalizado, datos.nombre().trim(),
                 codificador.encode(datos.password()));
