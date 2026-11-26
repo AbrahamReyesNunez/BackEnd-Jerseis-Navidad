@@ -40,19 +40,22 @@ public class AuthService {
     private final JwtService jwtService;
     private final CorreoService correo;
     private final HashSeguro hash;
+    private final DetectorCorreoTemporal correosTemporales;
     private final AppProperties props;
     private final Clock reloj;
 
     // INYECCIÓN DE DEPENDENCIAS: no hacemos "new" de nada. Spring ve el constructor,
     // busca un objeto de cada tipo y nos lo pasa ya creado.
     public AuthService(UsuarioRepository usuarios, TokenVerificacionRepository tokens, PasswordEncoder codificador,
-                       JwtService jwtService, CorreoService correo, HashSeguro hash, AppProperties props, Clock reloj) {
+                       JwtService jwtService, CorreoService correo, HashSeguro hash,
+                       DetectorCorreoTemporal correosTemporales, AppProperties props, Clock reloj) {
         this.usuarios = usuarios;
         this.tokens = tokens;
         this.codificador = codificador;
         this.jwtService = jwtService;
         this.correo = correo;
         this.hash = hash;
+        this.correosTemporales = correosTemporales;
         this.props = props;
         this.reloj = reloj;
     }
@@ -63,11 +66,15 @@ public class AuthService {
      */
     @Transactional
     public void registrar(RegistroRequest datos, DatosCliente cliente) {
+        if (correosTemporales.esTemporal(datos.email())) {
+            throw ApiException.peticionInvalida("EMAIL_TEMPORAL",
+                    "No se admiten correos temporales. Regístrate con tu correo habitual.");
+        }
         String normalizado = NormalizadorEmail.normalizar(datos.email());
         if (usuarios.existsByEmailNormalizado(normalizado)) {
             throw ApiException.conflicto("EMAIL_YA_REGISTRADO", "Ya existe una cuenta con ese email");
         }
-        // TODO (equipo antifraude): rechazar dominios de correo temporal y comprobar el CAPTCHA.
+        // TODO (equipo antifraude): comprobar el CAPTCHA.
 
         Usuario usuario = new Usuario(datos.email().trim(), normalizado, datos.nombre().trim(),
                 codificador.encode(datos.password()));

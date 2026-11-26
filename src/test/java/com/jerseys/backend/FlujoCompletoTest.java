@@ -73,6 +73,12 @@ class FlujoCompletoTest {
                 .andExpect(jsonPath("$.codigo").value("DATOS_INVALIDOS"))
                 .andExpect(jsonPath("$.campos.aceptaPrivacidad").exists());
 
+        // Correos temporales (de usar y tirar) → 400
+        mvc.perform(post("/api/auth/registro").contentType(MediaType.APPLICATION_JSON)
+                        .content(cuerpoRegistro("tramposo@mailinator.com", "Tramposo")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.codigo").value("EMAIL_TEMPORAL"));
+
         String ana = registrarVerificarYEntrar("ana@test.com", "Ana");
         String beto = registrarVerificarYEntrar("beto@test.com", "Beto");
         String carla = registrarVerificarYEntrar("carla@test.com", "Carla");
