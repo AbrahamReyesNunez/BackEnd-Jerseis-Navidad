@@ -32,15 +32,16 @@ public class VotoController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    @Operation(summary = "Envía tus 3 votos de golpe: 3, 2 y 1 puntos a jerseys distintos (no el tuyo)")
+    @Operation(summary = "Voto popular: envía tus 3 votos de golpe, 3, 2 y 1 puntos a jerseys distintos "
+            + "(no los tuyos). El jurado también vota aquí, y su voto cuenta igual")
     public List<MiVotoResponse> votar(@AuthenticationPrincipal UsuarioActual yo,
                                       @Valid @RequestBody VotarRequest peticion,
                                       HttpServletRequest http) {
-        return votoService.votar(yo.id(), peticion, DatosCliente.de(http));
+        return votoService.votar(yo.id(), peticion.votos(), DatosCliente.de(http));
     }
 
     @GetMapping("/mios")
-    @Operation(summary = "Los votos que has dado tú (nunca los de los demás)")
+    @Operation(summary = "Los votos que has dado tú en el voto popular (nunca los de los demás)")
     public List<MiVotoResponse> mios(@AuthenticationPrincipal UsuarioActual yo) {
         return votoService.misVotos(yo.id());
     }

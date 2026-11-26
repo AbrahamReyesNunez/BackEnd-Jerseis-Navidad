@@ -132,6 +132,23 @@ await fetch("/api/votos", {
 });
 ```
 
+**Jurado** (solo rol `JURADO`). Además del voto popular de arriba, vota en 4 categorías, **una petición por categoría**:
+
+```js
+// Qué categorías hay y en cuáles ha votado ya: [{ categoria, nombre, descripcion, votado, votos }]
+const categorias = await (await fetch("/api/jurado/categorias", { headers: { Authorization: "Bearer " + token } })).json();
+
+await fetch("/api/jurado/votos", {
+  method: "POST",
+  headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+  body: JSON.stringify({ categoria: "DIVERTIDO", votos: [   // DIVERTIDO | ORIGINAL | NAVIDENO | EXTRAVAGANTE
+    { jerseyId: 12, puntos: 3 }, { jerseyId: 3, puntos: 2 }, { jerseyId: 7, puntos: 1 },
+  ]}),
+});
+```
+
+El admin ve el resultado de cada categoría en `GET /api/ranking?categoria=DIVERTIDO` (sin parámetro, el popular).
+
 ### El contrato de la API: Swagger
 
 Con el backend arrancado, abre **http://localhost:8080/swagger-ui.html**. Ahí están **todas las rutas**, qué JSON esperan y qué devuelven, y puedes probarlas desde el navegador:
@@ -234,7 +251,8 @@ Un método marcado con `@Transactional` es **todo o nada**: si falla a mitad, se
 - **JWT:** al hacer login, el backend devuelve un token firmado con una clave secreta. El front lo manda en cada petición (`Authorization: Bearer …`). Si alguien modifica el token, la firma deja de cuadrar y se rechaza. Caduca a las 12 horas.
 - **Roles:** las reglas están en `SeguridadConfig`:
   - `/api/admin/**` → solo `ADMIN`
-  - `/api/ranking` → `PROFESOR` o `ADMIN`
+  - `/api/ranking` → `PROFESOR` o `ADMIN` (el jurado no, para que no le influyan los resultados)
+  - `/api/jurado/**` → solo `JURADO`
   - el resto de `/api/**` → cualquier usuario logueado, salvo las rutas públicas (registro, login, fase).
 - **IPs:** se guardan como HMAC (un hash con clave secreta), no en claro.
 - **Secretos:** las claves y contraseñas van en **variables de entorno**, nunca en el código ni en Git.
@@ -358,3 +376,4 @@ Ejemplo: "los jerseys tienen un título".
 - **Sistema de votación 3-2-1:** cada usuario da 3 puntos a un jersey, 2 a otro y 1 a otro (antes era 6-5-4-3-2-1). Desempate en el ranking: más votos de 3, luego de 2, luego de 1.
 - **Sin mínimo de participantes:** si hay menos de 3 jerseys ajenos, se reparten solo las puntuaciones más altas (con 2 jerseys: 3 y 2; con 1: solo el 3).
 - **Hasta 3 jerseys por persona** (antes, 1). Los eliminados por el admin no cuentan. `GET /api/jerseys/mio` pasa a ser `GET /api/jerseys/mios` y devuelve `{ maximo, activos, jerseys: [...] }` (lista vacía si no hay ninguno, ya no da 404). Si ya tienes 3: `409 LIMITE_DE_JERSEYS`. Migración `V3__tres_jerseys_por_usuario.sql`.
+- **Rol `JURADO` y 5 categorías de premio** (bases, apartado 5). `POPULAR` la vota todo el mundo, también el jurado, con el mismo peso. `DIVERTIDO`, `ORIGINAL`, `NAVIDENO` y `EXTRAVAGANTE` solo las vota el jurado, con el mismo sistema 3-2-1 y las mismas reglas, una vez por categoría (`/api/jurado/**`). El admin nombra jurado con `PATCH /api/admin/usuarios/{id}/rol` `{"rol":"JURADO"}`. Cada voto guarda su `categoria` (migración `V4__jurado_y_categorias.sql`). Ranking por categoría: `GET /api/ranking?categoria=...`. El panel de sospechosos solo analiza el voto popular.

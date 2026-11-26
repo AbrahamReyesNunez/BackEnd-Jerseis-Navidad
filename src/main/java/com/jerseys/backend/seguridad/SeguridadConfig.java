@@ -48,6 +48,7 @@ public class SeguridadConfig {
                         .requestMatchers("/error").permitAll()
                         // ----- Por rol -----
                         .requestMatchers("/api/ranking/**").hasAnyRole("PROFESOR", "ADMIN")
+                        .requestMatchers("/api/jurado/**").hasRole("JURADO")
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
                         // ----- Todo lo demás: basta con estar logueado -----
                         .anyRequest().authenticated())

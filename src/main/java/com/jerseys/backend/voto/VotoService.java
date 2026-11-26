@@ -11,8 +11,8 @@ import com.jerseys.backend.jersey.JerseyRepository;
 import com.jerseys.backend.jersey.JerseyService;
 import com.jerseys.backend.usuario.Usuario;
 import com.jerseys.backend.usuario.UsuarioRepository;
+import com.jerseys.backend.voto.VotoDtos.CategoriaJuradoResponse;
 import com.jerseys.backend.voto.VotoDtos.MiVotoResponse;
-import com.jerseys.backend.voto.VotoDtos.VotarRequest;
 import com.jerseys.backend.voto.VotoDtos.VotoAdminResponse;
 import com.jerseys.backend.voto.VotoDtos.VotoItem;
 import org.springframework.stereotype.Service;
@@ -20,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -29,12 +30,16 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 /**
- * Reglas de votación (sistema 3-2-1, decidido por la clase):
- *  - Solo en fase VOTACION, y una única vez por usuario (no se puede rectificar).
+ * Reglas de votación (sistema 3-2-1, decidido por la clase), iguales en TODAS las categorías:
+ *  - Solo en fase VOTACION, y una única vez por usuario y categoría (no se puede rectificar).
  *  - Se reparten de golpe 3 puntos a un jersey, 2 a otro y 1 a otro (jerseys distintos).
- *  - No se puede votar el propio jersey.
+ *  - No se puede votar ninguno de tus jerseys.
  *  - Si hay menos de 3 jerseys ajenos, se reparten solo las puntuaciones más altas
  *    (con 2 jerseys: 3 y 2; con 1 jersey: solo el 3).
+ *
+ * Categorías (ver Categoria): POPULAR la vota todo el mundo, también el jurado, y su voto
+ * cuenta igual. Las otras cuatro solo las vota el JURADO (la regla de acceso está en
+ * SeguridadConfig: /api/jurado/**).
  *
  * Para cambiar el número de puntos basta con MAX_VOTOS, pero hay que acompañarlo de una
  * migración de Flyway que cambie la restricción CHECK de la tabla votos (ver V2).
@@ -64,11 +69,31 @@ public class VotoService {
         this.reloj = reloj;
     }
 
+    /** Voto popular: lo puede hacer cualquier usuario (también el jurado). */
     @Transactional
-    public List<MiVotoResponse> votar(Long usuarioId, VotarRequest peticion, DatosCliente cliente) {
+    public List<MiVotoResponse> votar(Long usuarioId, List<VotoItem> items, DatosCliente cliente) {
+        return registrarPapeleta(usuarioId, Categoria.POPULAR, items, cliente);
+    }
+
+    /** Voto del jurado en una de sus cuatro categorías. */
+    @Transactional
+    public List<MiVotoResponse> votarComoJurado(Long usuarioId, Categoria categoria, List<VotoItem> items,
+                                                DatosCliente cliente) {
+        if (!categoria.esDelJurado()) {
+            throw ApiException.peticionInvalida("CATEGORIA_NO_VALIDA",
+                    "El voto popular se envía a /api/votos, como el resto de participantes");
+        }
+        return registrarPapeleta(usuarioId, categoria, items, cliente);
+    }
+
+    /** Comprueba y guarda una papeleta (3-2-1) de un usuario en una categoría. Común a todas las categorías. */
+    private List<MiVotoResponse> registrarPapeleta(Long usuarioId, Categoria categoria, List<VotoItem> items,
+                                                   DatosCliente cliente) {
         fases.exigir("votar", Fase.VOTACION);
-        if (votos.existsByUsuarioId(usuarioId)) {
-            throw ApiException.conflicto("YA_HAS_VOTADO", "Ya has votado. Los votos no se pueden cambiar.");
+        if (votos.existsByUsuarioIdAndCategoria(usuarioId, categoria)) {
+            throw ApiException.conflicto("YA_HAS_VOTADO", categoria == Categoria.POPULAR
+                    ? "Ya has votado. Los votos no se pueden cambiar."
+                    : "Ya has votado en «" + categoria.nombre() + "». Los votos no se pueden cambiar.");
         }
 
         // Jerseys que este usuario puede votar: aprobados y que no sean suyos
@@ -80,7 +105,6 @@ public class VotoService {
         if (votosNecesarios == 0) {
             throw ApiException.conflicto("NO_HAY_JERSEYS", "No hay jerseys que puedas votar");
         }
-        List<VotoItem> items = peticion.votos();
         if (items.size() != votosNecesarios) {
             throw ApiException.peticionInvalida("NUMERO_DE_VOTOS_INCORRECTO",
                     "Tienes que repartir exactamente " + votosNecesarios + " votos");
@@ -114,7 +138,8 @@ public class VotoService {
         Instant ahora = reloj.instant();
         String ipHash = hash.hmac(cliente.ip());
         List<Voto> nuevos = items.stream()
-                .map(i -> new Voto(votante, votables.get(i.jerseyId()), i.puntos(), ahora, ipHash, cliente.userAgent()))
+                .map(i -> new Voto(votante, votables.get(i.jerseyId()), categoria, i.puntos(), ahora, ipHash,
+                        cliente.userAgent()))
                 .toList();
         // saveAllAndFlush manda los INSERT ya: si dos peticiones llegan a la vez, la restricción
         // UNIQUE de la BD rechaza la segunda (y ManejadorErrores responde 409).
@@ -123,17 +148,30 @@ public class VotoService {
         return nuevos.stream().map(this::aMiVoto).toList();
     }
 
+    /** Tus votos del voto popular. */
     @Transactional(readOnly = true)
     public List<MiVotoResponse> misVotos(Long usuarioId) {
-        return votos.findByUsuarioIdOrderByPuntosDesc(usuarioId).stream().map(this::aMiVoto).toList();
+        return votosDe(usuarioId, Categoria.POPULAR);
+    }
+
+    /** Las cuatro categorías del jurado, cada una con lo que ha votado ya este jurado (vacío si nada). */
+    @Transactional(readOnly = true)
+    public List<CategoriaJuradoResponse> categoriasDelJurado(Long usuarioId) {
+        return Arrays.stream(Categoria.values())
+                .filter(Categoria::esDelJurado)
+                .map(c -> {
+                    List<MiVotoResponse> suyos = votosDe(usuarioId, c);
+                    return new CategoriaJuradoResponse(c, c.nombre(), c.descripcion(), !suyos.isEmpty(), suyos);
+                })
+                .toList();
     }
 
     @Transactional(readOnly = true)
     public List<VotoAdminResponse> listarParaAdmin() {
         return votos.findAllParaAdmin().stream()
                 .map(v -> new VotoAdminResponse(v.getId(), v.getUsuario().getId(), v.getUsuario().getEmail(),
-                        v.getJersey().getId(), v.getPuntos(), v.getFecha(), v.getIpHash(), v.getUserAgent(),
-                        v.isAnulado()))
+                        v.getCategoria(), v.getJersey().getId(), v.getPuntos(), v.getFecha(), v.getIpHash(),
+                        v.getUserAgent(), v.isAnulado()))
                 .toList();
     }
 
@@ -142,6 +180,11 @@ public class VotoService {
         Voto voto = votos.findById(votoId)
                 .orElseThrow(() -> ApiException.noEncontrado("VOTO_NO_ENCONTRADO", "No existe ese voto"));
         voto.anular(usuarios.getReferenceById(adminId));
+    }
+
+    private List<MiVotoResponse> votosDe(Long usuarioId, Categoria categoria) {
+        return votos.findByUsuarioIdAndCategoriaOrderByPuntosDesc(usuarioId, categoria).stream()
+                .map(this::aMiVoto).toList();
     }
 
     private MiVotoResponse aMiVoto(Voto v) {

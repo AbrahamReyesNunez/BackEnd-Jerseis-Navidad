@@ -37,6 +37,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -212,6 +213,63 @@ class FlujoCompletoTest {
                         .content(votos(Map.of(jerseyBeto1, 3, jerseyAna, 2, jerseyBeto4, 1))))
                 .andExpect(status().isCreated());
 
+        // ----- Jurado -----
+        // Un usuario normal no puede entrar en las rutas del jurado
+        mvc.perform(get("/api/jurado/categorias").header("Authorization", "Bearer " + ana))
+                .andExpect(status().isForbidden());
+
+        // El admin nombra jurado a Carla (que ya ha votado en el popular, como cualquiera).
+        // El rol se lee de la BD en cada petición: su token sirve sin volver a entrar.
+        mvc.perform(patch("/api/admin/usuarios/" + idDe(carla) + "/rol").header("Authorization", "Bearer " + admin)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"rol\":\"JURADO\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.rol").value("JURADO"));
+
+        mvc.perform(get("/api/jurado/categorias").header("Authorization", "Bearer " + carla))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(4))
+                .andExpect(jsonPath("$[0].categoria").value("DIVERTIDO"))
+                .andExpect(jsonPath("$[0].nombre").value("El más divertido"))
+                .andExpect(jsonPath("$[0].votado").value(false));
+
+        // El voto popular no se manda por la ruta del jurado
+        mvc.perform(post("/api/jurado/votos").header("Authorization", "Bearer " + carla)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(votosJurado("POPULAR", Map.of(jerseyBeto1, 3, jerseyAna, 2, jerseyBeto2, 1))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.codigo").value("CATEGORIA_NO_VALIDA"));
+
+        // Mismas reglas que el voto popular: tampoco puede votar su propio jersey
+        mvc.perform(post("/api/jurado/votos").header("Authorization", "Bearer " + carla)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(votosJurado("DIVERTIDO", Map.of(jerseyCarla, 3, jerseyAna, 2, jerseyBeto1, 1))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.codigo").value("VOTO_PROPIO"));
+
+        mvc.perform(post("/api/jurado/votos").header("Authorization", "Bearer " + carla)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(votosJurado("DIVERTIDO", Map.of(jerseyAna, 3, jerseyBeto2, 2, jerseyBeto4, 1))))
+                .andExpect(status().isCreated());
+
+        // Una sola vez por categoría
+        mvc.perform(post("/api/jurado/votos").header("Authorization", "Bearer " + carla)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(votosJurado("DIVERTIDO", Map.of(jerseyAna, 3, jerseyBeto2, 2, jerseyBeto4, 1))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.codigo").value("YA_HAS_VOTADO"));
+
+        // En otra categoría puede volver a dar los mismos puntos a los mismos jerseys
+        mvc.perform(post("/api/jurado/votos").header("Authorization", "Bearer " + carla)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(votosJurado("ORIGINAL", Map.of(jerseyAna, 3, jerseyBeto2, 2, jerseyBeto4, 1))))
+                .andExpect(status().isCreated());
+
+        mvc.perform(get("/api/jurado/categorias").header("Authorization", "Bearer " + carla))
+                .andExpect(jsonPath("$[?(@.categoria == 'DIVERTIDO')].votado").value(true))
+                .andExpect(jsonPath("$[?(@.categoria == 'ORIGINAL')].votado").value(true))
+                .andExpect(jsonPath("$[?(@.categoria == 'NAVIDENO')].votado").value(false))
+                .andExpect(jsonPath("$[0].votos.length()").value(3));
+
         // En votación el admin ya no puede eliminar fotos
         mvc.perform(post("/api/admin/jerseys/" + jerseyBeto1 + "/eliminar").header("Authorization", "Bearer " + admin)
                         .contentType(MediaType.APPLICATION_JSON).content("{\"motivo\":\"prueba\"}"))
@@ -224,13 +282,31 @@ class FlujoCompletoTest {
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.codigo").value("SIN_PERMISO"));
 
-        // El admin sí: el primer jersey de Beto gana con 6 puntos (3 + 3)
+        // El jurado tampoco: no debe ver resultados mientras vota
+        mvc.perform(get("/api/ranking").header("Authorization", "Bearer " + carla))
+                .andExpect(status().isForbidden());
+
+        // El admin sí: el primer jersey de Beto gana el popular con 6 puntos (3 + 3).
+        // Los votos de Carla como jurado NO cuentan aquí: solo su voto popular.
         mvc.perform(get("/api/ranking").header("Authorization", "Bearer " + admin))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(5))
                 .andExpect(jsonPath("$[0].jerseyId").value(jerseyBeto1))
                 .andExpect(jsonPath("$[0].puntos").value(6))
                 .andExpect(jsonPath("$[0].autor").value("Beto"));
+
+        // Ranking de una categoría del jurado: Ana gana «El más divertido» con los 3 puntos de Carla
+        mvc.perform(get("/api/ranking").param("categoria", "DIVERTIDO").header("Authorization", "Bearer " + admin))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].jerseyId").value(jerseyAna))
+                .andExpect(jsonPath("$[0].puntos").value(3));
+        // Categoría en la que nadie ha votado: todos a 0
+        mvc.perform(get("/api/ranking").param("categoria", "NAVIDENO").header("Authorization", "Bearer " + admin))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].puntos").value(0));
+        mvc.perform(get("/api/ranking").param("categoria", "NOEXISTE").header("Authorization", "Bearer " + admin))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.codigo").value("PARAMETRO_INVALIDO"));
 
         // ----- Panel de sospechosos -----
         // En este test todos se registran desde 127.0.0.1 en pocos segundos → ráfaga
@@ -335,6 +411,17 @@ class FlujoCompletoTest {
         return """
                 {"email":"%s","nombre":"%s","password":"password123",
                  "aceptaPrivacidad":true,"aceptaConsentimiento":true,"mayorDe14":true}""".formatted(email, nombre);
+    }
+
+    /** El id del usuario dueño de un token. */
+    private long idDe(String token) throws Exception {
+        MvcResult r = mvc.perform(get("/api/auth/yo").header("Authorization", "Bearer " + token)).andReturn();
+        return ((Number) JsonPath.read(r.getResponse().getContentAsString(), "$.id")).longValue();
+    }
+
+    /** Cuerpo para POST /api/jurado/votos: {"categoria": "...", "votos": [...]} */
+    private String votosJurado(String categoria, Map<Long, Integer> puntosPorJersey) {
+        return "{\"categoria\":\"" + categoria + "\"," + votos(puntosPorJersey).substring(1);
     }
 
     private void registrar(String email, String nombre) throws Exception {
