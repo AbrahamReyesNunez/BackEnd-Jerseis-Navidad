@@ -318,7 +318,7 @@ Ejemplo: "los jerseys tienen un título".
 | Detección de caras con OpenCV | `imagen/DetectorCaras.java` | Instrucciones en el comentario `TODO` |
 | Detección de contenido obsceno | `imagen/DetectorContenidoInapropiado.java` | ONNX Runtime + modelo NSFW |
 | CAPTCHA en el registro | `auth/AuthService.registrar` | Cloudflare Turnstile |
-| Bloquear correos temporales | `auth/AuthService.registrar` | Lista `disposable-email-domains` |
+| ~~Bloquear correos temporales~~ ✅ | `auth/DetectorCorreoTemporal` | Hecho. Lista en `resources/correos-temporales.txt`; error `EMAIL_TEMPORAL` (400) |
 | Límite de peticiones por IP | nuevo filtro | Bucket4j (registro y login) |
 | Panel de sospechosos | `admin/AdminController` | Agrupar por `ipHash`, detectar ráfagas |
 | Almacén SFTP | nuevo `imagen/AlmacenSftp.java` | Si ASIR monta SFTP en vez de FTP |
