@@ -3,6 +3,7 @@ package com.jerseys.backend.admin;
 import com.jerseys.backend.admin.AdminDtos.CambiarActivoRequest;
 import com.jerseys.backend.admin.AdminDtos.CambiarRolRequest;
 import com.jerseys.backend.admin.AdminDtos.UsuarioAdminResponse;
+import com.jerseys.backend.admin.SospechososDtos.PanelSospechososResponse;
 import com.jerseys.backend.fase.FaseDtos.CambiarFechasRequest;
 import com.jerseys.backend.fase.FaseDtos.FaseResponse;
 import com.jerseys.backend.fase.FaseService;
@@ -41,13 +42,16 @@ public class AdminController {
     private final JerseyService jerseyService;
     private final VotoService votoService;
     private final FaseService faseService;
+    private final PanelSospechososService panelSospechosos;
 
     public AdminController(AdminUsuariosService adminUsuarios, JerseyService jerseyService,
-                           VotoService votoService, FaseService faseService) {
+                           VotoService votoService, FaseService faseService,
+                           PanelSospechososService panelSospechosos) {
         this.adminUsuarios = adminUsuarios;
         this.jerseyService = jerseyService;
         this.votoService = votoService;
         this.faseService = faseService;
+        this.panelSospechosos = panelSospechosos;
     }
 
     // ----- Usuarios -----
@@ -102,8 +106,14 @@ public class AdminController {
         votoService.anular(yo.id(), id);
     }
 
-    // TODO (equipo antifraude): GET /api/admin/sospechosos → agrupar registros y votos por ipHash
-    //      y señalar ráfagas (muchas cuentas en pocos minutos, todas votando al mismo jersey).
+    // ----- Antifraude -----
+
+    @GetMapping("/sospechosos")
+    @Operation(summary = "Señales de trampa: ráfagas de registros o votos desde una IP, cuentas de una IP "
+            + "que dan 6 puntos al mismo jersey y papeletas idénticas. Son pistas, no pruebas: revisa cada caso")
+    public PanelSospechososResponse sospechosos() {
+        return panelSospechosos.analizar();
+    }
 
     // ----- Fechas del concurso -----
 

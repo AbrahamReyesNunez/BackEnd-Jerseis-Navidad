@@ -179,6 +179,17 @@ class FlujoCompletoTest {
                 .andExpect(jsonPath("$[0].jerseyId").value(jerseyBeto))
                 .andExpect(jsonPath("$[0].puntos").value(12))
                 .andExpect(jsonPath("$[0].autor").value("Beto"));
+
+        // ----- Panel de sospechosos -----
+        // En este test todos se registran desde 127.0.0.1 en pocos segundos → ráfaga
+        mvc.perform(get("/api/admin/sospechosos").header("Authorization", "Bearer " + admin))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.grupos[0].numCuentas").value(4))
+                .andExpect(jsonPath("$.grupos[0].senales[0]").value("RAFAGA_REGISTROS"))
+                .andExpect(jsonPath("$.papeletasIdenticas").isEmpty());
+        // Solo para ADMIN
+        mvc.perform(get("/api/admin/sospechosos").header("Authorization", "Bearer " + ana))
+                .andExpect(status().isForbidden());
     }
 
     @Test
