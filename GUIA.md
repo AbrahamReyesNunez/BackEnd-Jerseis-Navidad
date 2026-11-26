@@ -344,7 +344,7 @@ Ejemplo: "los jerseys tienen un título".
 | ~~CAPTCHA en el registro~~ ✅ | `auth/VerificadorCaptcha` | Hecho. Campo `captchaToken`; errores `CAPTCHA_OBLIGATORIO`/`CAPTCHA_INVALIDO` (400) y `CAPTCHA_NO_DISPONIBLE` (503). Falta crear el widget en Cloudflare |
 | ~~Bloquear correos temporales~~ ✅ | `auth/DetectorCorreoTemporal` | Hecho. Lista en `resources/correos-temporales.txt`; error `EMAIL_TEMPORAL` (400) |
 | ~~Límite de peticiones por IP~~ ✅ | `seguridad/LimitadorPeticiones` | Hecho. Login, registro y reenvío del correo; error `DEMASIADAS_PETICIONES` (429). Límites en `app.limites.*` |
-| Panel de sospechosos | `admin/AdminController` | Agrupar por `ipHash`, detectar ráfagas |
+| ~~Panel de sospechosos~~ ✅ | `admin/AnalizadorSospechosos` | Hecho. `GET /api/admin/sospechosos`: ráfagas de registros/votos por IP, mismo favorito y papeletas idénticas. Falta la pantalla en el front |
 | Almacén SFTP | nuevo `imagen/AlmacenSftp.java` | Si ASIR monta SFTP en vez de FTP |
 | Decidir el sistema de votación | `voto/VotoService` | Ahora es "tipo Eurovisión" (6-5-4-3-2-1) |
 | Despliegue | con ASIR | Java 21, servicio systemd, variables de `.env.example` |
