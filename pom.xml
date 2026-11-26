@@ -31,6 +31,7 @@
 		<commons-net.version>3.13.0</commons-net.version>
 		<embedded-postgres.version>2.2.3</embedded-postgres.version>
 		<bucket4j.version>8.23.0</bucket4j.version>
+		<opencv.version>4.9.0-0</opencv.version>
 	</properties>
 
 	<dependencies>
@@ -122,6 +123,13 @@
 			<groupId>commons-net</groupId>
 			<artifactId>commons-net</artifactId>
 			<version>${commons-net.version}</version>
+		</dependency>
+		<!-- OpenCV: visión por ordenador (detectar caras en las fotos).
+		     Trae dentro las librerías nativas de Windows, Linux y Mac: no hay que instalar nada. -->
+		<dependency>
+			<groupId>org.openpnp</groupId>
+			<artifactId>opencv</artifactId>
+			<version>${opencv.version}</version>
 		</dependency>
 
 		<!-- ===== Tests ===== -->
