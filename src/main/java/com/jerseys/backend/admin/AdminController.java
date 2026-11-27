@@ -4,6 +4,8 @@ import com.jerseys.backend.admin.AdminDtos.CambiarActivoRequest;
 import com.jerseys.backend.admin.AdminDtos.CambiarRolRequest;
 import com.jerseys.backend.admin.AdminDtos.UsuarioAdminResponse;
 import com.jerseys.backend.admin.SospechososDtos.PanelSospechososResponse;
+import com.jerseys.backend.auth.dto.AuthDtos.MensajeResponse;
+import com.jerseys.backend.correo.CorreoService;
 import com.jerseys.backend.fase.FaseDtos.CambiarFechasRequest;
 import com.jerseys.backend.fase.FaseDtos.FaseResponse;
 import com.jerseys.backend.fase.FaseService;
@@ -43,15 +45,29 @@ public class AdminController {
     private final VotoService votoService;
     private final FaseService faseService;
     private final PanelSospechososService panelSospechosos;
+    private final CorreoService correo;
 
     public AdminController(AdminUsuariosService adminUsuarios, JerseyService jerseyService,
                            VotoService votoService, FaseService faseService,
-                           PanelSospechososService panelSospechosos) {
+                           PanelSospechososService panelSospechosos, CorreoService correo) {
         this.adminUsuarios = adminUsuarios;
         this.jerseyService = jerseyService;
         this.votoService = votoService;
         this.faseService = faseService;
         this.panelSospechosos = panelSospechosos;
+        this.correo = correo;
+    }
+
+    // ----- Correo -----
+
+    @PostMapping("/correo/prueba")
+    @Operation(summary = "Envía un correo de prueba para comprobar que el servidor de correo está bien configurado. "
+            + "Va a tu email de admin, o a '?para=otro@email.com'. Si falla, devuelve el error del servidor (503)")
+    public MensajeResponse correoDePrueba(@AuthenticationPrincipal UsuarioActual yo,
+                                          @RequestParam(required = false) String para) {
+        String destinatario = para == null || para.isBlank() ? yo.email() : para.trim();
+        correo.enviarPrueba(destinatario);
+        return new MensajeResponse("Correo de prueba enviado a " + destinatario + ". Revisa la bandeja (y el spam).");
     }
 
     // ----- Usuarios -----

@@ -32,6 +32,7 @@
 		<embedded-postgres.version>2.2.3</embedded-postgres.version>
 		<bucket4j.version>8.23.0</bucket4j.version>
 		<opencv.version>4.9.0-0</opencv.version>
+		<greenmail.version>2.1.15</greenmail.version>
 	</properties>
 
 	<dependencies>
@@ -151,6 +152,13 @@
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-flyway-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<!-- GreenMail: servidor de correo FALSO para los tests (recibe los emails sin enviarlos a nadie) -->
+		<dependency>
+			<groupId>com.icegreen</groupId>
+			<artifactId>greenmail-junit5</artifactId>
+			<version>${greenmail.version}</version>
 			<scope>test</scope>
 		</dependency>
 		<!-- PostgreSQL de verdad, arrancado dentro de los tests (no hace falta instalar nada) -->

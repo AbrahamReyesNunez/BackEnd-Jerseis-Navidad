@@ -322,9 +322,65 @@ La primera vez tarda un poco (descarga las dependencias). Cuando veas `Started J
 ### Probar el flujo completo en Swagger
 
 1. `POST /api/auth/registro` con tu email.
-2. El correo **no se envía** en desarrollo: aparece en la **consola** del backend. Copia el enlace y ábrelo en el navegador para verificar la cuenta. Te redirigirá a `/verificacion.html`, que dará 404 hasta que el front haga esa página, pero la cuenta ya queda activada.
+2. En desarrollo el correo **no se envía** (salvo que configures uno, ver "Correo" más abajo): aparece en la **consola** del backend. Copia el enlace y ábrelo en el navegador para verificar la cuenta. Te redirigirá a `/verificacion.html`, que dará 404 hasta que el front haga esa página, pero la cuenta ya queda activada.
 3. Entra como admin y fija las fechas con `PUT /api/admin/configuracion` (por ejemplo, subida abierta ahora).
 4. Entra con tu usuario, sube una foto, cambia las fechas para abrir la votación, vota…
+
+### Correo
+
+El backend envía correos para **activar la cuenta** y para avisar si el admin **retira un jersey**. Usa SMTP, que es el "idioma" estándar del correo, así que vale cualquier proveedor: solo cambian las variables de entorno.
+
+- **En desarrollo** (perfil `dev`), si no defines `MAIL_HOST`, los correos se escriben en la consola.
+- **En producción es obligatorio:** sin `MAIL_HOST`, la aplicación **no arranca**. Es a propósito: sin correo nadie podría activar su cuenta.
+- Los correos se envían **en segundo plano** (el usuario no espera) y **solo cuando la base de datos ha guardado los cambios**. Si el envío falla, se apunta en el log y el usuario puede pedir otro con `POST /api/auth/reenviar-verificacion`.
+
+**Opción elegida: el correo del centro (`@victoriafp.com`).** Es la que usamos. El servidor `mail.victoriafp.com` está autorizado en el SPF del dominio, así que los correos llegan como legítimos y no suelen ir a spam.
+
+```
+MAIL_HOST=mail.victoriafp.com
+MAIL_PORT=587                        # STARTTLS. No uséis el 465: necesita otra configuración
+MAIL_USUARIO=la-cuenta@victoriafp.com
+MAIL_PASSWORD=la-contraseña-de-ese-buzón
+MAIL_REMITENTE=                      # vacío: se envía como MAIL_USUARIO
+```
+
+- Mejor una cuenta **dedicada al concurso** que el buzón personal de alguien: si esa persona cambia su contraseña, el correo del concurso deja de funcionar.
+- Preguntad a informática del centro **cuántos correos al día** deja enviar el servidor. El primer día puede haber muchos registros a la vez.
+
+Las opciones A y B quedan como alternativa por si el correo del centro diera problemas.
+
+**Opción A: Gmail.** Es la más sencilla, y el límite es de unos 500 correos al día.
+1. Cread una cuenta de Gmail **solo para el concurso**, no la personal de nadie.
+2. Activad la **verificación en dos pasos** de esa cuenta.
+3. Id a https://myaccount.google.com/apppasswords y cread una **contraseña de aplicación**: son 16 letras, y se ponen sin espacios.
+4. Variables:
+   ```
+   MAIL_HOST=smtp.gmail.com
+   MAIL_PORT=587
+   MAIL_USUARIO=la-cuenta@gmail.com
+   MAIL_PASSWORD=la-contraseña-de-aplicacion
+   MAIL_REMITENTE=                      # vacío: Gmail obliga a usar la misma cuenta
+   ```
+
+**Opción B: Brevo** (brevo.com). Plan gratis de 300 correos al día.
+1. Cread una cuenta y **verificad el email remitente** (Senders).
+2. En **SMTP & API** están el *login* SMTP y la *clave* SMTP.
+3. Variables: `MAIL_HOST=smtp-relay.brevo.com`, `MAIL_PORT=587`, `MAIL_USUARIO=<login SMTP>`, `MAIL_PASSWORD=<clave SMTP>` y `MAIL_REMITENTE=<el email verificado>`.
+
+**Comprobarlo:** arranca el backend con esas variables, entra como admin en Swagger y ejecuta `POST /api/admin/correo/prueba`. Te llegará un correo a tu email de admin. Si falla, la respuesta trae el error que da el servidor de correo (contraseña mal puesta, puerto bloqueado…).
+
+Para probarlo **en tu ordenador** con un correo de verdad, define las variables en la misma terminal antes de arrancar. La contraseña se pide con `Read-Host`: así **no se ve en pantalla ni se guarda en el historial** de PowerShell (si la escribieras en el comando, quedaría guardada en texto plano en tu PC):
+
+```powershell
+$env:MAIL_HOST = "mail.victoriafp.com"
+$env:MAIL_USUARIO = "la-cuenta@victoriafp.com"
+$env:MAIL_PASSWORD = [System.Net.NetworkCredential]::new("", (Read-Host "Contraseña del correo" -AsSecureString)).Password
+.\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=dev"
+```
+
+Las variables solo duran mientras esa terminal esté abierta. Al cerrarla, desaparecen.
+
+> ⚠️ La contraseña de aplicación es un secreto: **nunca** en el código ni en Git. Solo en el `.env` del servidor.
 
 ### Ejecutar los tests
 
