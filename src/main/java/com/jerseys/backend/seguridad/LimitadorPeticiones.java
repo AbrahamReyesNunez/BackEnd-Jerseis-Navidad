@@ -27,7 +27,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @Component
 public class LimitadorPeticiones {
 
-    public enum Accion { LOGIN, REGISTRO, REENVIAR_VERIFICACION }
+    public enum Accion { LOGIN, REGISTRO, REENVIAR_VERIFICACION, RECUPERAR_PASSWORD }
 
     /** Tope de cubos en memoria. Si alguien llama desde miles de IPs distintas, no nos come la RAM. */
     private static final int MAX_CUBOS = 100_000;
@@ -66,6 +66,7 @@ public class LimitadorPeticiones {
             case LOGIN -> limites.login();
             case REGISTRO -> limites.registro();
             case REENVIAR_VERIFICACION -> limites.reenviarVerificacion();
+            case RECUPERAR_PASSWORD -> limites.recuperarPassword();
         };
     }
 

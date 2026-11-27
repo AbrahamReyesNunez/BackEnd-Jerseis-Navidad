@@ -65,6 +65,13 @@ public class Usuario {
     @Column(name = "mayor_18_confirmado", nullable = false)
     private boolean mayor18Confirmado;
 
+    /**
+     * Va dentro de cada JWT. Al cambiar la contraseña sube en 1, y los JWT que llevan el número
+     * anterior dejan de valer: es como cambiar la cerradura, las llaves viejas ya no abren.
+     */
+    @Column(name = "version_sesion", nullable = false)
+    private int versionSesion = 0;
+
     // JPA necesita un constructor vacío
     protected Usuario() {
     }
@@ -88,6 +95,16 @@ public class Usuario {
         this.mayor18Confirmado = true;
     }
 
+    /**
+     * Nueva contraseña (ya cifrada) y cierre de todas las sesiones abiertas.
+     * Si la cuenta no estaba verificada, queda verificada: el enlace llegó a su correo, así que es suyo.
+     */
+    public void cambiarPassword(String nuevoHash) {
+        this.passwordHash = nuevoHash;
+        this.versionSesion++;
+        this.verificado = true;
+    }
+
     public boolean puedeIniciarSesion() {
         return verificado && activo;
     }
@@ -98,6 +115,7 @@ public class Usuario {
     public String getEmail() { return email; }
     public String getEmailNormalizado() { return emailNormalizado; }
     public String getNombre() { return nombre; }
+    public int getVersionSesion() { return versionSesion; }
     public String getPasswordHash() { return passwordHash; }
     public Rol getRol() { return rol; }
     public void setRol(Rol rol) { this.rol = rol; }

@@ -105,6 +105,27 @@ public class CorreoService {
                         "Si no te has registrado tú, ignora este correo.")));
     }
 
+    public void enviarRecuperacionPassword(String destinatario, String nombre, String enlace) {
+        enviarDespuesDelCommit(new Mensaje(destinatario, "Cambia tu contraseña · El hilo que nos une",
+                """
+                Hola %s:
+
+                Alguien (seguramente tú) ha pedido cambiar la contraseña de tu cuenta del concurso
+                «El hilo que nos une». Para poner una nueva, abre este enlace (caduca en 1 hora):
+
+                %s
+
+                Si no lo has pedido tú, ignora este correo: tu contraseña sigue siendo la misma.
+                """.formatted(nombre, enlace),
+                plantilla("Cambia tu contraseña",
+                        "<p>Hola " + htmlEscape(nombre) + ":</p>"
+                                + "<p>Alguien (seguramente tú) ha pedido cambiar la contraseña de tu cuenta del "
+                                + "concurso <strong>«El hilo que nos une»</strong>. Pulsa el botón para poner una "
+                                + "nueva (el enlace caduca en 1 hora).</p>",
+                        "Poner una contraseña nueva", enlace,
+                        "Si no lo has pedido tú, ignora este correo: tu contraseña sigue siendo la misma.")));
+    }
+
     public void enviarJerseyEliminado(String destinatario, String nombre, String motivo, boolean puedeResubir) {
         String siguientePaso = puedeResubir
                 ? "Todavía está abierto el plazo de subida, así que puedes subir otra foto."

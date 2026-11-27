@@ -126,6 +126,33 @@ if (!r.ok) turnstile.reset();   // el token es de UN solo uso: si el registro fa
 
 Para probar en local, usad la sitekey de prueba `1x00000000000000000000AA` (siempre aprueba). En el backend el CAPTCHA está desactivado en el perfil `dev`; para probarlo de verdad, poned `app.captcha.activado=true` en `application-dev.properties`.
 
+**¿Has olvidado tu contraseña?** Son dos pasos y **dos páginas del front**:
+
+```js
+// 1) En el login, un enlace "¿Has olvidado tu contraseña?" lleva a un formulario que pide el email.
+//    Siempre responde lo mismo, exista o no la cuenta (para no revelar quién está registrado).
+await fetch("/api/auth/olvide-password", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ email }),
+});
+
+// 2) Al usuario le llega un correo con un enlace a la página del front
+//    /restablecer-password.html?token=XXXX  (dura 1 hora y solo vale una vez).
+//    Esa página pide la contraseña nueva (8 a 72 caracteres) y la manda junto con el token:
+const token = new URLSearchParams(location.search).get("token");
+const r = await fetch("/api/auth/restablecer-password", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ token, password: nuevaPassword }),
+});
+const datos = await r.json();
+alert(datos.mensaje);   // OK → "Contraseña cambiada..." y llevarle al login
+// Errores: ENLACE_NO_VALIDO (no existe o ya se usó), ENLACE_CADUCADO (más de 1 hora), DATOS_INVALIDOS (contraseña corta)
+```
+
+Al cambiar la contraseña **se cierran todas las sesiones abiertas** de esa cuenta: los tokens anteriores dan `401`, también en otros navegadores. Si la cuenta no estaba verificada, queda verificada (el enlace le llegó a su correo).
+
 **Votar** (los 3 de golpe: 3, 2 y 1 puntos a jerseys distintos):
 
 ```js
@@ -492,4 +519,5 @@ Ejemplo: "los jerseys tienen un título".
 - **Un jersey, un premio:** el ganador popular no aparece para el jurado y un jersey no puede ganar dos categorías (`409 YA_TIENE_PREMIO`; la BD también lo impide con `UNIQUE (jersey_id)`). Quien marca no puede elegir su propio jersey (`JERSEY_PROPIO`).
 - **Sin rol `PROFESOR`:** solo el `ADMIN` ve los votos y el ranking. Los que fueran profesores pasan a `USUARIO` (migración V6). Los ganadores, sin puntos, se publican para todos en `GET /api/resultados` a partir del 16.
 - **Dos fotos por jersey:** delante (`foto`, obligatoria) y detrás (`fotoTrasera`, opcional). Las dos pasan las mismas comprobaciones (formato, caras, contenido inapropiado); si una falla no se guarda ninguna. Las respuestas traen `imagenTraseraUrl` (`null` si no hay). Columna `jerseys.imagen_trasera_nombre` (migración `V5__foto_trasera_y_mayor_18.sql`).
+- **Recuperar la contraseña:** `POST /api/auth/olvide-password` y `POST /api/auth/restablecer-password` (ver sección 2). El enlace dura 1 hora y es de un solo uso; pedir otro anula el anterior. En la BD no se guarda el token del enlace sino su HMAC, así que leyendo la BD no se pueden cambiar contraseñas ajenas. Cada JWT lleva la `version_sesion` del usuario: al cambiar la contraseña sube en 1 y los JWT viejos dejan de valer. Límite: 10 peticiones cada 10 minutos por IP (`LIMITE_RECUPERAR`). Migración `V7__recuperar_password.sql`.
 - **Solo mayores de 18:** la casilla del registro pasa de `mayorDe14` a `mayorDe18` ("Debes tener 18 años o más para participar"). En la BD, `mayor_14_confirmado` se sustituye por `mayor_18_confirmado`; las cuentas que ya existían quedan en `false`, porque confirmaron 14 y no 18 (migración V5).

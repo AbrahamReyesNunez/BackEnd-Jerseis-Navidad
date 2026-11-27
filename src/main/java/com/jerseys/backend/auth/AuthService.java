@@ -32,6 +32,8 @@ import java.util.Base64;
 public class AuthService {
 
     private static final Duration VALIDEZ_TOKEN_EMAIL = Duration.ofHours(24);
+    /** El enlace para cambiar la contraseña caduca antes: si alguien lo encuentra luego, ya no sirve. */
+    private static final Duration VALIDEZ_TOKEN_PASSWORD = Duration.ofHours(1);
     private static final SecureRandom ALEATORIO = new SecureRandom();
 
     private final UsuarioRepository usuarios;
@@ -91,7 +93,7 @@ public class AuthService {
         usuarios.findByEmailNormalizado(NormalizadorEmail.normalizar(email))
                 .filter(u -> !u.isVerificado())
                 .ifPresent(u -> {
-                    tokens.invalidarPendientes(u);
+                    tokens.invalidarPendientes(u, TokenVerificacion.Tipo.VERIFICACION_EMAIL);
                     enviarCorreoVerificacion(u);
                 });
     }
@@ -101,7 +103,7 @@ public class AuthService {
 
     @Transactional
     public ResultadoVerificacion verificar(String token) {
-        return tokens.findByToken(token)
+        return tokens.findByTokenAndTipo(token, TokenVerificacion.Tipo.VERIFICACION_EMAIL)
                 .map(t -> {
                     if (!t.esValido(reloj.instant())) {
                         return t.isUsado() && t.getUsuario().isVerificado()
@@ -115,6 +117,49 @@ public class AuthService {
                     return ResultadoVerificacion.OK;
                 })
                 .orElse(ResultadoVerificacion.INVALIDO);
+    }
+
+    /**
+     * "He olvidado mi contraseña": manda un enlace para poner una nueva.
+     * Respondemos igual exista o no la cuenta (no revelamos qué emails están registrados).
+     * A una cuenta bloqueada por el admin no se le manda nada: no podría entrar igualmente.
+     */
+    @Transactional
+    public void olvidePassword(String email) {
+        usuarios.findByEmailNormalizado(NormalizadorEmail.normalizar(email))
+                .filter(Usuario::isActivo)
+                .ifPresent(u -> {
+                    // Solo vale el último enlace que se pida
+                    tokens.invalidarPendientes(u, TokenVerificacion.Tipo.RECUPERAR_PASSWORD);
+                    String token = generarTokenAleatorio();
+                    // Guardamos el HMAC del token, no el token: el de verdad solo está en el correo
+                    tokens.save(new TokenVerificacion(u, hash.hmac(token), TokenVerificacion.Tipo.RECUPERAR_PASSWORD,
+                            reloj.instant().plus(VALIDEZ_TOKEN_PASSWORD)));
+                    // Una página del FRONT con el formulario de la nueva contraseña (no una ruta de la API):
+                    // si un antivirus del correo "abre" el enlace para revisarlo, no gasta el token.
+                    String enlace = props.urlPublica() + "/restablecer-password.html?token=" + token;
+                    correo.enviarRecuperacionPassword(u.getEmail(), u.getNombre(), enlace);
+                });
+    }
+
+    /** Cambia la contraseña con el token del enlace. Cierra todas las sesiones abiertas de esa cuenta. */
+    @Transactional
+    public void restablecerPassword(String token, String nuevaPassword) {
+        TokenVerificacion t = tokens.findByTokenAndTipo(hash.hmac(token), TokenVerificacion.Tipo.RECUPERAR_PASSWORD)
+                .filter(encontrado -> !encontrado.isUsado())
+                .orElseThrow(() -> ApiException.peticionInvalida("ENLACE_NO_VALIDO",
+                        "Este enlace no es válido o ya se ha usado. Pide otro desde «¿Has olvidado tu contraseña?»."));
+        if (t.haCaducado(reloj.instant())) {
+            throw ApiException.peticionInvalida("ENLACE_CADUCADO",
+                    "Este enlace ha caducado (dura 1 hora). Pide otro desde «¿Has olvidado tu contraseña?».");
+        }
+        Usuario usuario = t.getUsuario();
+        if (!usuario.isActivo()) {
+            throw ApiException.prohibido("CUENTA_BLOQUEADA", "Tu cuenta está bloqueada");
+        }
+        t.marcarUsado();
+        tokens.invalidarPendientes(usuario, TokenVerificacion.Tipo.RECUPERAR_PASSWORD);
+        usuario.cambiarPassword(codificador.encode(nuevaPassword));
     }
 
     @Transactional(readOnly = true)

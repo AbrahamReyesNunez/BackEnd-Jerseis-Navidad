@@ -40,7 +40,8 @@ public class SeguridadConfig {
                 .authorizeHttpRequests(reglas -> reglas
                         // ----- Públicas -----
                         .requestMatchers("/api/auth/registro", "/api/auth/login",
-                                "/api/auth/verificar", "/api/auth/reenviar-verificacion").permitAll()
+                                "/api/auth/verificar", "/api/auth/reenviar-verificacion",
+                                "/api/auth/olvide-password", "/api/auth/restablecer-password").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/fase").permitAll()
                         // Los ganadores, cuando ya se han publicado (antes, 403 FASE_INCORRECTA)
                         .requestMatchers(HttpMethod.GET, "/api/resultados").permitAll()

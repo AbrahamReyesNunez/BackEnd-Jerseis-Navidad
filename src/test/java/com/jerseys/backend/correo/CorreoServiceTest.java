@@ -63,6 +63,18 @@ class CorreoServiceTest {
     }
 
     @Test
+    void elCorreoParaCambiarLaContrasenaLlevaElEnlace() throws Exception {
+        String enlace = "http://localhost:8080/restablecer-password.html?token=xyz";
+        correo(CONFIG, "").enviarRecuperacionPassword("ana@test.com", "Ana", enlace);
+
+        MimeMessage recibido = smtp.getReceivedMessages()[0];
+        assertThat(recibido.getSubject()).isEqualTo("Cambia tu contraseña · El hilo que nos une");
+        assertThat(parte(recibido, "text/plain")).contains(enlace).contains("caduca en 1 hora");
+        assertThat(parte(recibido, "text/html")).contains("href=\"" + enlace + "\"")
+                .contains("Poner una contrase&ntilde;a nueva"); // en HTML la ñ va escapada
+    }
+
+    @Test
     void dentroDeUnaTransaccionEsperaAlCommit() throws Exception {
         TransactionSynchronizationManager.initSynchronization();
         try {
