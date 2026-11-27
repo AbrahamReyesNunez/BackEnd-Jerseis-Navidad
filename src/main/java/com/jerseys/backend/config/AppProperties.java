@@ -37,7 +37,14 @@ public record AppProperties(
 
     public record Cors(List<String> origenes) {}
 
-    public record Imagenes(String almacen, String urlBase, String directorioLocal, Ftp ftp) {}
+    /** urlBase: dónde se ven las fotos en la web. Siempre acaba en "/" (se le añade si falta). */
+    public record Imagenes(String almacen, String urlBase, String directorioLocal, Ftp ftp) {
+        public Imagenes {
+            if (urlBase != null && !urlBase.endsWith("/")) {
+                urlBase = urlBase + "/";
+            }
+        }
+    }
 
     public record Ftp(String host, int puerto, String usuario, String password, String directorio, boolean ftps) {}
 

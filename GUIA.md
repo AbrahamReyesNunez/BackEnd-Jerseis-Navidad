@@ -11,15 +11,18 @@ Esta guía explica **cómo funciona el backend** y **cómo trabajar en él**. L�
  │ Navegador  │ ──────► │ Cloudflare (túnel)  │ ────────────► │ Front (HTML/CSS/JS)  │
  │ (usuario)  │         │                     │   /api/       ┌──────────────────────┐  JDBC  ┌────────────┐
  └────────────┘         │                     │ ────────────► │ Spring Boot (Java)   │ ─────► │ PostgreSQL │
-                        │                     │   /imagenes/  │  + carpeta de fotos  │        └────────────┘
-                        │                     │ ────────────► └──────────────────────┘
-                        └─────────────────────┘
+                        │                     │               └──────────┬───────────┘        └────────────┘
+                        │                     │                          │ sube y borra las fotos (FTP)
+                        │                     │   /imagenes/  ┌──────────▼───────────┐
+                        │                     │ ────────────► │ Fotos (carpeta del   │
+                        └─────────────────────┘               │ FTP, servida por web)│
+                                                              └──────────────────────┘
 ```
 
 - **El front** son archivos estáticos: HTML, CSS y JS. El navegador los descarga y los ejecuta. El front **no** toca la base de datos: le pide todo al backend.
 - **El backend** (este proyecto) es un programa Java que está siempre encendido, escuchando peticiones HTTP en el puerto 8080. Aplica las reglas del concurso y es **el único** que habla con la base de datos.
 - **La base de datos** (PostgreSQL) guarda usuarios, jerseys, votos y fechas.
-- **El túnel de Cloudflare** (lo monta ASIR) es la puerta de entrada: pone el HTTPS y reparte cada petición según su ruta. Las fotos las guarda y las sirve el propio backend. Detalles en la sección 11.
+- **El túnel de Cloudflare** (lo monta ASIR) es la puerta de entrada: pone el HTTPS y reparte cada petición según su ruta. Las fotos las sube el backend a un **servidor FTP**, y se ven en la web desde `/imagenes/`. Detalles en la sección 11.
 
 > **Idea clave:** el front es "la cara" y el backend es "el cerebro". Todo lo que el usuario ve y toca es del front. Todo lo que hay que **comprobar** o **guardar** es del backend, aunque el front ya lo haya comprobado. Cualquiera puede saltarse el front y llamar a la API directamente con Postman.
 
@@ -565,7 +568,7 @@ Ejemplo: "los jerseys tienen un título".
 | ~~Bloquear correos temporales~~ ✅ | `auth/DetectorCorreoTemporal` | Hecho. Lista en `resources/correos-temporales.txt`; error `EMAIL_TEMPORAL` (400) |
 | ~~Límite de peticiones por IP~~ ✅ | `seguridad/LimitadorPeticiones` | Hecho. Login, registro y reenvío del correo; error `DEMASIADAS_PETICIONES` (429). Límites en `app.limites.*` |
 | ~~Panel de sospechosos~~ ✅ | `admin/AnalizadorSospechosos` | Hecho. `GET /api/admin/sospechosos`: ráfagas de registros/votos por IP, mismo favorito y papeletas idénticas. Falta la pantalla en el front |
-| ~~Almacén SFTP~~ | — | Ya no hace falta: en el VPS las fotos van en una carpeta local (sección 11) |
+| Almacén SFTP | nuevo `imagen/AlmacenSftp.java` | Solo si ASIR monta SFTP en vez de FTP/FTPS |
 | ~~Decidir el sistema de votación~~ ✅ | `voto/VotoService` | Hecho. Sistema 3-2-1 (migración `V2__votacion_3_2_1.sql`) |
 | Despliegue | con ASIR | VPS + Docker + túnel de Cloudflare: ver sección 11 |
 
@@ -598,11 +601,11 @@ Según el plan de ASIR ("Documentación despliegue de servicios en VPS"): VPS de
 ```
  Navegador ──HTTPS──► Cloudflare ──túnel──► cloudflared (en el VPS)
                                               │  /api/*       → backend   127.0.0.1:8080
-                                              │  /imagenes/*  → backend   127.0.0.1:8080
+                                              │  /imagenes/*  → quien enseñe la carpeta del FTP (ver "Fotos")
                                               │  todo lo demás → front    (servidor de archivos estáticos)
 ```
 
-- **Front y API en el MISMO dominio** (`https://elhiloquenosune.es`). En Cloudflare, **Zero Trust → Networks → Tunnels → Public Hostname**: una entrada con *Path* `api/*` → `http://localhost:8080`, otra con `imagenes/*` → `http://localhost:8080`, y otra sin *Path* → el front. El orden importa: las que tienen *Path*, primero. Si se separan en dominios distintos, fallan las llamadas del front (CORS) y los enlaces de los correos.
+- **Front y API en el MISMO dominio** (`https://elhiloquenosune.es`). En Cloudflare, **Zero Trust → Networks → Tunnels → Public Hostname**: una entrada con *Path* `api/*` → `http://localhost:8080`, otra con `imagenes/*` → quien enseñe las fotos (ver "Fotos"), y otra sin *Path* → el front. El orden importa: las que tienen *Path*, primero. Si se separan en dominios distintos, fallan las llamadas del front (CORS) y los enlaces de los correos.
 - **Un solo dominio principal.** `.com`, `.info` y `.store` tienen que **redirigir** a `elhiloquenosune.es` (Cloudflare → *Rules → Redirect Rules*). Si cada uno abriera la web, los enlaces de los correos y el CAPTCHA solo funcionarían en uno.
 - **IP real del visitante:** Cloudflare la manda en `X-Forwarded-For` y el backend ya la lee (`server.forward-headers-strategy=native`). No hay que configurar nada más, **siempre que el puerto 8080 no esté abierto a Internet** (ver Docker).
 
@@ -613,10 +616,27 @@ Según el plan de ASIR ("Documentación despliegue de servicios en VPS"): VPS de
 Con el túnel, UFW solo necesita **SSH**: el túnel sale del servidor hacia Cloudflare, no hace falta abrir el 80 ni el 443.
 
 - **Imagen:** `eclipse-temurin:21-jre` (Ubuntu). **No** una `alpine`: OpenCV (detección de caras y de fotos inapropiadas) no funciona en Alpine.
-- **Fotos:** `IMAGENES_ALMACEN=local` y `IMAGENES_DIRECTORIO=/datos/imagenes` montado como **volumen**. Si no es un volumen, las fotos se pierden al recrear el contenedor. El backend las sirve él mismo en `/imagenes/`.
 - **Base de datos:** PostgreSQL 17 con un volumen para sus datos. Basta con crear una base de datos vacía y un usuario: las tablas las crea el backend al arrancar (Flyway).
 - **Memoria:** con 8 GB hay de sobra. Se puede limitar Java a 1-2 GB con `JAVA_TOOL_OPTIONS=-Xmx1g`.
 - **Tests:** si se ejecutan dentro de un contenedor, **no como root**: el PostgreSQL de los tests se niega a arrancar como root.
+
+### Fotos: FTP
+
+El backend **sube** cada foto al servidor FTP (y la **borra** si el admin la retira). Pero el FTP solo las guarda: **el navegador no puede abrir fotos por FTP**. Hace falta que algo enseñe esa carpeta por la web. Dos casos:
+
+**A) El FTP está en el mismo VPS** (por ejemplo, un contenedor con vsftpd o pure-ftpd):
+- La carpeta de las fotos es un **volumen** que comparten el FTP y un Nginx pequeño que solo sirve archivos estáticos.
+- En el túnel, `imagenes/*` → ese Nginx. Dejad `IMAGENES_URL_BASE` vacío: las fotos se ven en `https://elhiloquenosune.es/imagenes/...`.
+- Nginx tiene que servir el **contenido** de la carpeta en `/imagenes/` (si `FTP_DIRECTORIO=/imagenes`, la URL `/imagenes/abc.jpg` es el archivo `abc.jpg` de esa carpeta).
+- El backend y el FTP en la misma red de Docker: `FTP_HOST` = nombre del servicio del FTP. El puerto del FTP **no** se publica a Internet (o solo en `127.0.0.1`), y entonces `FTP_FTPS=false` vale.
+- **Modo pasivo:** el backend usa FTP pasivo. El servidor FTP tiene que anunciar una dirección y unos puertos pasivos a los que llegue el contenedor del backend (en vsftpd: `pasv_address`, `pasv_min_port`, `pasv_max_port`). Es el fallo más típico del FTP en Docker: el login funciona pero la subida se queda colgada.
+
+**B) El FTP está en otro servidor** que ya tiene web (por ejemplo, un hosting):
+- `FTP_FTPS=true` (la contraseña viaja por Internet).
+- `IMAGENES_URL_BASE` = la dirección web donde ese servidor enseña la carpeta, por ejemplo `https://fotos.elhiloquenosune.es/imagenes/`.
+- En el túnel no hace falta la ruta `imagenes/*`.
+
+Para comprobarlo: subir un jersey y abrir la `imagenUrl` que devuelve la API.
 
 ### Variables del `.env`
 
@@ -625,7 +645,9 @@ Todas están explicadas en `.env.example`. Las que cambian con este montaje:
 | Variable | Valor |
 | --- | --- |
 | `URL_PUBLICA` | `https://elhiloquenosune.es` (sin `/` al final) |
-| `IMAGENES_ALMACEN` / `IMAGENES_DIRECTORIO` | `local` / `/datos/imagenes` (volumen) |
+| `IMAGENES_ALMACEN` | `ftp` |
+| `FTP_HOST`, `FTP_PUERTO`, `FTP_USUARIO`, `FTP_PASSWORD` 🔒, `FTP_DIRECTORIO`, `FTP_FTPS` | Los del servidor FTP (ver "Fotos: FTP") |
+| `IMAGENES_URL_BASE` | Vacío en el caso A; la dirección web de las fotos en el caso B |
 | `TURNSTILE_SECRETO` | La clave secreta del widget. En Cloudflare → Turnstile, añadir `elhiloquenosune.es` a los *hostnames* del widget |
 | `MAIL_*` | El correo del centro (sección "Correo") |
 | `CORREO_PAUSA_MASIVOS` | Según el límite de correos por hora del correo del centro |
@@ -634,7 +656,12 @@ Todas están explicadas en `.env.example`. Las que cambian con este montaje:
 
 ### Caché de Cloudflare y fotos retiradas
 
-Cloudflare guarda copias de las fotos para servirlas más rápido. El backend le dice que solo las guarde **5 minutos**, así que una foto que retira el admin deja de verse en ese tiempo. Si es urgente: Cloudflare → **Caching → Configuration → Purge Cache → Custom Purge** con la URL de la foto.
+Cloudflare guarda copias de las fotos para servirlas más rápido. Si el admin retira una foto inapropiada, Cloudflare podría seguir enseñándola un par de horas. Para que sean **5 minutos** como mucho, hay que decírselo, y como las fotos no las sirve el backend sino el FTP, se hace en Cloudflare:
+
+- **Caching → Cache Rules → Create rule**: *URI Path* empieza por `/imagenes/` → *Eligible for cache*, **Edge TTL** = *Ignore cache-control header and use this TTL* → **5 minutes**, y **Browser TTL** = **5 minutes**.
+- (Si las enseña un Nginx del VPS, además en su configuración: `expires 5m;`)
+
+Si es urgente: **Caching → Configuration → Purge Cache → Custom Purge** con la URL de la foto.
 
 ### Copias de seguridad
 
@@ -644,7 +671,7 @@ Además de las *snapshots* del VPS, una copia diaria de la base de datos durante
 docker exec <contenedor-postgres> pg_dump -U jerseys jerseys | gzip > /copias/jerseys-$(date +%F).sql.gz
 ```
 
-Y copia de la carpeta de fotos (`/datos/imagenes`).
+Y copia de la carpeta de fotos del FTP.
 
 ### Lista de comprobación del lanzamiento
 
@@ -655,7 +682,7 @@ Y copia de la carpeta de fotos (`/datos/imagenes`).
 5. Entrar como admin y mandar el correo de prueba (`POST /api/admin/correo/prueba`): llega.
 6. Poner las 6 fechas (sección "Fases y calendario del concurso").
 7. Registrarse con una cuenta nueva: llega el correo, el enlace activa la cuenta y el CAPTCHA funciona.
-8. Subir una foto (se ve en `/imagenes/...`), y retirarla como admin.
+8. Subir una foto: aparece en la carpeta del FTP y se ve abriendo su `imagenUrl`. Retirarla como admin: desaparece del FTP y, como mucho en 5 minutos, de la web.
 9. Nombrar al jurado antes del 13 de diciembre.
 
 ### Pagos
