@@ -2,10 +2,13 @@ package com.jerseys.backend;
 
 import com.jayway.jsonpath.JsonPath;
 import com.jerseys.backend.auth.TokenVerificacionRepository;
+import com.jerseys.backend.aviso.AvisosService;
 import com.jerseys.backend.correo.CorreoService;
+import com.jerseys.backend.correo.CorreoService.Destinatario;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.ArgumentMatcher;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
@@ -30,6 +33,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
@@ -41,7 +46,9 @@ import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -79,6 +86,9 @@ class FlujoCompletoTest {
     /** El servicio de correo de verdad, pero "espiado": podemos ver con qué datos se le llama (p. ej. el enlace). */
     @MockitoSpyBean
     private CorreoService correo;
+
+    @Autowired
+    private AvisosService avisos;
 
     private MockMvc mvc;
 
@@ -204,6 +214,12 @@ class FlujoCompletoTest {
                 ahora.minus(1, ChronoUnit.HOURS), ahora.plus(1, ChronoUnit.HOURS),
                 ahora.plus(2, ChronoUnit.HOURS), ahora.plus(3, ChronoUnit.HOURS));
 
+        // Al empezar la votación se avisa a todos por correo. Aunque se compruebe dos veces, sale UNA
+        avisos.comprobar();
+        avisos.comprobar();
+        verify(correo, times(1)).enviarVotacionAbierta(
+                argThat(incluye("ana@test.com", "beto@test.com", "carla@test.com")), any(), any());
+
         MvcResult lista = mvc.perform(get("/api/jerseys").header("Authorization", "Bearer " + ana))
                 .andExpect(status().isOk())
                 .andReturn();
@@ -326,6 +342,10 @@ class FlujoCompletoTest {
                 ahora.plus(1, ChronoUnit.HOURS), ahora.plus(2, ChronoUnit.HOURS));
         mvc.perform(get("/api/fase")).andExpect(jsonPath("$.fase").value("DECISION_JURADO"));
 
+        // Aviso de que se ha cerrado la votación
+        avisos.comprobar();
+        verify(correo).enviarVotacionCerrada(argThat(incluye("ana@test.com", "carla@test.com")), any(), any());
+
         // Ya no se puede votar, y el admin ya no puede anular votos (cambiaría el ganador popular)
         mvc.perform(post("/api/votos").header("Authorization", "Bearer " + beto)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -398,6 +418,15 @@ class FlujoCompletoTest {
                 ahora.minus(2, ChronoUnit.HOURS), ahora.minus(1, ChronoUnit.HOURS));
         mvc.perform(get("/api/fase")).andExpect(jsonPath("$.fase").value("RESULTADOS"));
 
+        // Aviso de los ganadores a todos; a Beto (popular) y a Ana (original), con su premio
+        avisos.comprobar();
+        verify(correo).enviarResultados(argThat(incluye("ana@test.com", "beto@test.com", "carla@test.com")), any(),
+                argThat((Map<String, String> ganadores) ->
+                        "El favorito del público".equals(ganadores.get("beto@test.com"))
+                                && "El más original".equals(ganadores.get("ana@test.com"))
+                                && !ganadores.containsKey("carla@test.com")),
+                any());
+
         // El jurado ya no puede cambiar nada
         mvc.perform(elegirGanador(carla, "NAVIDENO", jerseyAna))
                 .andExpect(status().isForbidden())
@@ -414,6 +443,24 @@ class FlujoCompletoTest {
                 .andExpect(jsonPath("$.premios[?(@.categoria == 'ORIGINAL')].ganador.autor").value("Ana"))
                 // Categoría que el jurado dejó sin elegir: desierta
                 .andExpect(jsonPath("$.premios[?(@.categoria == 'DIVERTIDO')].ganador").value(contains(nullValue())));
+
+        // ----- Ana borra su cuenta cuando ya se han dado los premios -----
+        mvc.perform(borrarCuenta(ana, "no-es-esta"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.codigo").value("PASSWORD_INCORRECTA"));
+        mvc.perform(borrarCuenta(ana, "password123")).andExpect(status().isOk());
+        // Ya no puede entrar, ni con la sesión que tenía abierta
+        mvc.perform(get("/api/auth/yo").header("Authorization", "Bearer " + ana))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"ana@test.com\",\"password\":\"password123\"}"))
+                .andExpect(status().isUnauthorized());
+        // Los premios ya estaban decididos: no cambian, pero ya no sale su nombre
+        mvc.perform(get("/api/resultados"))
+                .andExpect(jsonPath("$.premios[?(@.categoria == 'ORIGINAL')].ganador.autor").value("Cuenta borrada"));
+        // Ni rastro de su email
+        mvc.perform(get("/api/admin/usuarios").param("buscar", "ana@test.com").header("Authorization", "Bearer " + admin))
+                .andExpect(jsonPath("$.length()").value(0));
 
         // Fechas desordenadas (fin del jurado antes que fin de la votación) → 400
         mvc.perform(put("/api/admin/configuracion").header("Authorization", "Bearer " + admin)
@@ -570,6 +617,141 @@ class FlujoCompletoTest {
         mvc.perform(restablecer(tokenDelEnlace(enlaceFede.getValue()), "clave-de-fede"))
                 .andExpect(status().isOk());
         login("fede@test.com", "clave-de-fede");
+
+        // ----- Cambiar la contraseña desde el perfil (sabiendo la actual) -----
+        mvc.perform(cambiarPassword(sesionNueva, ip, "no-es-esta", "otra-clave-3"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.codigo").value("PASSWORD_INCORRECTA"));
+        String sesionEnOtroNavegador = login("eva@test.com", "nueva-clave-1", ip);
+        MvcResult cambio = mvc.perform(cambiarPassword(sesionNueva, ip, "nueva-clave-1", "otra-clave-3"))
+                .andExpect(status().isOk())
+                .andReturn();
+        String tokenDevuelto = JsonPath.read(cambio.getResponse().getContentAsString(), "$.token");
+        // Las demás sesiones se cierran; quien la ha cambiado sigue dentro con el token nuevo
+        mvc.perform(get("/api/auth/yo").header("Authorization", "Bearer " + sesionEnOtroNavegador))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(get("/api/auth/yo").header("Authorization", "Bearer " + tokenDevuelto))
+                .andExpect(status().isOk());
+        login("eva@test.com", "otra-clave-3", ip);
+    }
+
+    @Test
+    void borrarMiCuentaDuranteLaVotacion() throws Exception {
+        // Usuarios propios de este test, desde otra IP para no mezclarse con los demás tests
+        String ip = "192.0.2.60";
+        String admin = login("admin@test.local", "admin12345", ip);
+        Instant ahora = Instant.now();
+        cambiarFechas(admin, ahora.minus(1, ChronoUnit.HOURS), ahora.plus(1, ChronoUnit.HOURS),
+                ahora.plus(2, ChronoUnit.HOURS), ahora.plus(3, ChronoUnit.HOURS),
+                ahora.plus(4, ChronoUnit.HOURS), ahora.plus(5, ChronoUnit.HOURS));
+        String gema = registrarVerificarYEntrarDesde(ip, "gema@test.com", "Gema");
+        String hugo = registrarVerificarYEntrarDesde(ip, "hugo@test.com", "Hugo");
+        String ines = registrarVerificarYEntrarDesde(ip, "ines@test.com", "Ines");
+        String javi = registrarVerificarYEntrarDesde(ip, "javi@test.com", "Javi");
+        String kike = registrarVerificarYEntrarDesde(ip, "kike@test.com", "Kike");
+        long jerseyGema = subirJersey(gema);
+        long jerseyHugo = subirJersey(hugo);
+        long jerseyJavi = subirJersey(javi);
+        long jerseyKike = subirJersey(kike);
+
+        // ----- Votación -----
+        cambiarFechas(admin, ahora.minus(3, ChronoUnit.HOURS), ahora.minus(2, ChronoUnit.HOURS),
+                ahora.minus(1, ChronoUnit.HOURS), ahora.plus(1, ChronoUnit.HOURS),
+                ahora.plus(2, ChronoUnit.HOURS), ahora.plus(3, ChronoUnit.HOURS));
+        votarEnEsteOrden(ines, ip, jerseyGema, jerseyHugo, jerseyJavi); // 3 a Gema, 2 a Hugo, 1 a Javi
+        votarEnEsteOrden(hugo, ip, jerseyGema);             // 3 a Gema
+        votarEnEsteOrden(gema, ip, jerseyHugo);             // 3 a Hugo
+
+        // El admin anula el voto de Ines a Hugo: a Ines le llega un correo
+        MvcResult todos = mvc.perform(get("/api/admin/votos").header("Authorization", "Bearer " + admin)).andReturn();
+        List<Number> votoInesAHugo = JsonPath.read(todos.getResponse().getContentAsString(),
+                "$[?(@.votanteEmail == 'ines@test.com' && @.jerseyId == " + jerseyHugo + ")].id");
+        mvc.perform(patch("/api/admin/votos/" + votoInesAHugo.get(0) + "/anular")
+                        .header("Authorization", "Bearer " + admin))
+                .andExpect(status().isNoContent());
+        verify(correo).enviarVotoAnulado(eq("ines@test.com"), eq("Ines"), eq(2),
+                argThat((String motivo) -> motivo.contains("organización")));
+
+        // El admin no puede borrar su propia cuenta (os podríais quedar sin ningún admin)
+        mvc.perform(borrarCuenta(admin, "admin12345", ip))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.codigo").value("ADMIN_NO_PUEDE_BORRARSE"));
+
+        // ----- Gema borra su cuenta en plena votación -----
+        long idGema = idDe(gema);
+        mvc.perform(borrarCuenta(gema, "password123", ip))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.mensaje").value("Tu cuenta y tus datos se han borrado. ¡Gracias por participar!"));
+
+        // Su jersey sale del concurso...
+        MvcResult lista = mvc.perform(get("/api/jerseys").header("Authorization", "Bearer " + ines)).andReturn();
+        List<Number> enConcurso = JsonPath.read(lista.getResponse().getContentAsString(), "$[*].id");
+        assertThat(enConcurso).extracting(Number::longValue).doesNotContain(jerseyGema).contains(jerseyHugo);
+        // ...y a quienes lo habían votado les llega un correo: ese voto ya no cuenta
+        verify(correo).enviarVotoAnulado(eq("ines@test.com"), eq("Ines"), eq(3),
+                argThat((String motivo) -> motivo.contains("retirado")));
+        verify(correo).enviarVotoAnulado(eq("hugo@test.com"), eq("Hugo"), eq(3),
+                argThat((String motivo) -> motivo.contains("retirado")));
+
+        // ----- Ines vuelve a votar los puntos que le han anulado (los 3 de Gema y los 2 de Hugo) -----
+        mvc.perform(get("/api/votos/pendientes").header("Authorization", "Bearer " + ines))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.puntos[0]").value(3));
+        // En "mis votos" ve cuáles le han anulado
+        mvc.perform(get("/api/votos/mios").header("Authorization", "Bearer " + ines))
+                .andExpect(jsonPath("$[?(@.anulado == true)].puntos", containsInAnyOrder(3, 2)))
+                .andExpect(jsonPath("$[?(@.anulado == false)].jerseyId", contains((int) jerseyJavi)));
+        // No puede volver a votar el jersey cuyo voto le anularon
+        mvc.perform(post("/api/votos").with(desdeIp(ip)).header("Authorization", "Bearer " + ines)
+                        .contentType(MediaType.APPLICATION_JSON).content(papeletaDePendientes(ines, jerseyHugo)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.codigo").value("JERSEY_YA_VOTADO"));
+        // Le da los 3 puntos a Kike
+        mvc.perform(post("/api/votos").with(desdeIp(ip)).header("Authorization", "Bearer " + ines)
+                        .contentType(MediaType.APPLICATION_JSON).content(papeletaDePendientes(ines, jerseyKike)))
+                .andExpect(status().isCreated());
+        MvcResult votosDeInes = mvc.perform(get("/api/admin/votos").header("Authorization", "Bearer " + admin))
+                .andReturn();
+        List<Integer> puntosAKike = JsonPath.read(votosDeInes.getResponse().getContentAsString(),
+                "$[?(@.votanteEmail == 'ines@test.com' && @.jerseyId == " + jerseyKike + " && @.anulado == false)].puntos");
+        assertThat(puntosAKike).containsExactly(3);
+        // Ya no le queda nada por repartir
+        mvc.perform(get("/api/votos/pendientes").header("Authorization", "Bearer " + ines))
+                .andExpect(jsonPath("$.puntos").isEmpty());
+        mvc.perform(post("/api/votos").with(desdeIp(ip)).header("Authorization", "Bearer " + ines)
+                        .contentType(MediaType.APPLICATION_JSON).content(votos(Map.of(jerseyKike, 1))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.codigo").value("YA_HAS_VOTADO"));
+
+        // Sus votos desaparecen, como si no hubiera votado
+        MvcResult despues = mvc.perform(get("/api/admin/votos").header("Authorization", "Bearer " + admin)).andReturn();
+        List<Number> votantes = JsonPath.read(despues.getResponse().getContentAsString(), "$[*].votanteId");
+        assertThat(votantes).extracting(Number::longValue).doesNotContain(idGema);
+
+        // No queda ni su email ni su nombre; la sesión que tenía ya no vale
+        mvc.perform(get("/api/admin/usuarios").param("buscar", "gema").header("Authorization", "Bearer " + admin))
+                .andExpect(jsonPath("$.length()").value(0));
+        mvc.perform(get("/api/admin/usuarios").header("Authorization", "Bearer " + admin))
+                .andExpect(jsonPath("$[?(@.id == " + idGema + ")].nombre").value("Cuenta borrada"));
+        mvc.perform(get("/api/auth/yo").header("Authorization", "Bearer " + gema))
+                .andExpect(status().isUnauthorized());
+        // El admin ya no puede tocar esa cuenta
+        mvc.perform(patch("/api/admin/usuarios/" + idGema + "/activo").header("Authorization", "Bearer " + admin)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"activo\":true}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.codigo").value("CUENTA_BORRADA"));
+
+        // Limpieza: Hugo e Ines también se dan de baja, para que sus votos y el jersey de Hugo
+        // no cuenten en los demás tests
+        mvc.perform(borrarCuenta(hugo, "password123", ip)).andExpect(status().isOk());
+        mvc.perform(borrarCuenta(ines, "password123", ip)).andExpect(status().isOk());
+        mvc.perform(borrarCuenta(javi, "password123", ip)).andExpect(status().isOk());
+        mvc.perform(borrarCuenta(kike, "password123", ip)).andExpect(status().isOk());
+
+        // Con el mismo email se puede volver a crear una cuenta (sus datos ya no están)
+        mvc.perform(post("/api/auth/registro").with(desdeIp(ip)).contentType(MediaType.APPLICATION_JSON)
+                        .content(cuerpoRegistro("gema@test.com", "Gema")))
+                .andExpect(status().isCreated());
     }
 
     @Test
@@ -581,6 +763,80 @@ class FlujoCompletoTest {
     }
 
     // ===================== Ayudantes =====================
+
+    private static MockHttpServletRequestBuilder borrarCuenta(String token, String password) {
+        return borrarCuenta(token, password, "127.0.0.1");
+    }
+
+    private static MockHttpServletRequestBuilder borrarCuenta(String token, String password, String ip) {
+        return post("/api/cuenta/borrar").with(desdeIp(ip)).header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"password\":\"%s\"}".formatted(password));
+    }
+
+    private static MockHttpServletRequestBuilder cambiarPassword(String token, String ip, String actual, String nueva) {
+        return post("/api/cuenta/cambiar-password").with(desdeIp(ip)).header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"passwordActual\":\"%s\",\"passwordNueva\":\"%s\"}".formatted(actual, nueva));
+    }
+
+    /** ¿La lista de destinatarios de un aviso incluye estos emails? */
+    private static ArgumentMatcher<List<Destinatario>> incluye(String... emails) {
+        return lista -> lista.stream().map(Destinatario::email).toList().containsAll(List.of(emails));
+    }
+
+    /**
+     * Vota dando 3 puntos al primer jersey indicado, 2 al segundo... y rellena con otros jerseys
+     * del concurso si hacen falta (depende de cuántos hayan dejado los demás tests).
+     */
+    private void votarEnEsteOrden(String token, String ip, long... preferidos) throws Exception {
+        MvcResult r = mvc.perform(get("/api/jerseys").header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk()).andReturn();
+        List<Number> ajenos = JsonPath.read(r.getResponse().getContentAsString(), "$[?(@.esPropio == false)].id");
+        List<Long> orden = new ArrayList<>();
+        for (long p : preferidos) {
+            orden.add(p);
+        }
+        ajenos.stream().map(Number::longValue).filter(id -> !orden.contains(id)).forEach(orden::add);
+        Map<Long, Integer> papeleta = new LinkedHashMap<>();
+        for (int i = 0; i < Math.min(3, ajenos.size()); i++) {
+            papeleta.put(orden.get(i), 3 - i);
+        }
+        mvc.perform(post("/api/votos").with(desdeIp(ip)).header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON).content(votos(papeleta)))
+                .andExpect(status().isCreated());
+    }
+
+    /**
+     * Papeleta con los puntos que le quedan por repartir (GET /api/votos/pendientes): el más alto a
+     * "primero" y el resto a otros jerseys que aún no haya votado (depende de lo que dejen los demás tests).
+     */
+    private String papeletaDePendientes(String token, long primero) throws Exception {
+        String auth = "Bearer " + token;
+        List<Integer> pendientes = JsonPath.read(mvc.perform(get("/api/votos/pendientes").header("Authorization", auth))
+                .andReturn().getResponse().getContentAsString(), "$.puntos");
+        List<Number> votados = JsonPath.read(mvc.perform(get("/api/votos/mios").header("Authorization", auth))
+                .andReturn().getResponse().getContentAsString(), "$[*].jerseyId");
+        List<Number> ajenos = JsonPath.read(mvc.perform(get("/api/jerseys").header("Authorization", auth))
+                .andReturn().getResponse().getContentAsString(), "$[?(@.esPropio == false)].id");
+        List<Long> orden = new ArrayList<>(List.of(primero));
+        ajenos.stream().map(Number::longValue)
+                .filter(id -> id != primero && votados.stream().noneMatch(v -> v.longValue() == id))
+                .forEach(orden::add);
+        Map<Long, Integer> papeleta = new LinkedHashMap<>();
+        for (int i = 0; i < pendientes.size(); i++) {
+            papeleta.put(orden.get(i), pendientes.get(i));
+        }
+        return votos(papeleta);
+    }
+
+    private String registrarVerificarYEntrarDesde(String ip, String email, String nombre) throws Exception {
+        mvc.perform(post("/api/auth/registro").with(desdeIp(ip)).contentType(MediaType.APPLICATION_JSON)
+                        .content(cuerpoRegistro(email, nombre)))
+                .andExpect(status().isCreated());
+        String token = tokens.findFirstByUsuarioEmailOrderByIdDesc(email).orElseThrow().getToken();
+        mvc.perform(get("/api/auth/verificar").param("token", token)).andExpect(status().isFound());
+        return login(email, "password123", ip);
+    }
 
     private static MockHttpServletRequestBuilder restablecer(String token, String password) {
         return post("/api/auth/restablecer-password").contentType(MediaType.APPLICATION_JSON)
@@ -635,7 +891,12 @@ class FlujoCompletoTest {
     }
 
     private String login(String email, String password) throws Exception {
-        MvcResult r = mvc.perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON)
+        return login(email, password, "127.0.0.1");
+    }
+
+    /** Desde otra IP, para no gastar los intentos de login de 127.0.0.1 (límite de 30 por hora en los tests). */
+    private String login(String email, String password, String ip) throws Exception {
+        MvcResult r = mvc.perform(post("/api/auth/login").with(desdeIp(ip)).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"email\":\"%s\",\"password\":\"%s\"}".formatted(email, password)))
                 .andExpect(status().isOk())
                 .andReturn();

@@ -4,6 +4,8 @@ import com.icegreen.greenmail.junit5.GreenMailExtension;
 import com.icegreen.greenmail.util.ServerSetupTest;
 import com.jerseys.backend.comun.ApiException;
 import com.jerseys.backend.config.AppProperties.Correo;
+import com.jerseys.backend.correo.CorreoService.Destinatario;
+import com.jerseys.backend.correo.CorreoService.PremioTexto;
 import jakarta.mail.Multipart;
 import jakarta.mail.Part;
 import jakarta.mail.internet.InternetAddress;
@@ -14,6 +16,11 @@ import org.springframework.http.HttpStatus;
 import org.springframework.mail.javamail.JavaMailSenderImpl;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -28,11 +35,12 @@ class CorreoServiceTest {
     @RegisterExtension
     static GreenMailExtension smtp = new GreenMailExtension(ServerSetupTest.SMTP);
 
-    private static final Correo CONFIG = new Correo("concurso@test.com", "El hilo que nos une", true);
+    private static final Correo CONFIG = new Correo("concurso@test.com", "El hilo que nos une", true, Duration.ZERO);
 
     /** Runnable::run = envía en el mismo hilo, para no tener que esperar en los tests. */
     private CorreoService correo(Correo config, String usuarioSmtp) {
-        return new CorreoService(clienteSmtp(ServerSetupTest.SMTP.getPort()), config, usuarioSmtp, Runnable::run);
+        return new CorreoService(clienteSmtp(ServerSetupTest.SMTP.getPort()), config, usuarioSmtp, Runnable::run,
+                Runnable::run);
     }
 
     private static JavaMailSenderImpl clienteSmtp(int puerto) {
@@ -75,6 +83,50 @@ class CorreoServiceTest {
     }
 
     @Test
+    void elAvisoDeVotacionLlegaATodosConLaFechaEnHoraDeEspana() throws Exception {
+        List<Destinatario> todos = List.of(new Destinatario("ana@test.com", "Ana"),
+                new Destinatario("beto@test.com", "Beto"));
+        // 13 de diciembre a las 11:00 UTC = a las 12:00 en España
+        correo(CONFIG, "").enviarVotacionAbierta(todos, Instant.parse("2026-12-13T11:00:00Z"), "https://web.test");
+
+        MimeMessage[] recibidos = smtp.getReceivedMessages();
+        assertThat(recibidos).hasSize(2);
+        assertThat(recibidos[0].getSubject()).isEqualTo("¡Ya puedes votar! · El hilo que nos une");
+        assertThat(parte(recibidos[0], "text/plain")).contains("Hola Ana:")
+                .contains("Tienes hasta el 13 de diciembre a las 12:00.");
+        assertThat(parte(recibidos[1], "text/plain")).contains("Hola Beto:");
+    }
+
+    @Test
+    void losGanadoresRecibenSuEnhorabuenaYLosDemasLaLista() throws Exception {
+        List<PremioTexto> premios = List.of(new PremioTexto("El favorito del público", "Beto"),
+                new PremioTexto("El más divertido", null));
+        correo(CONFIG, "").enviarResultados(
+                List.of(new Destinatario("ana@test.com", "Ana"), new Destinatario("beto@test.com", "Beto")),
+                premios, Map.of("beto@test.com", "El favorito del público"), "https://web.test");
+
+        MimeMessage paraAna = smtp.getReceivedMessages()[0];
+        MimeMessage paraBeto = smtp.getReceivedMessages()[1];
+        assertThat(paraAna.getSubject()).isEqualTo("¡Ya tenemos ganadores! · El hilo que nos une");
+        assertThat(parte(paraAna, "text/plain"))
+                .contains("- El favorito del público: Beto")
+                .contains("- El más divertido: Desierto")
+                .doesNotContain("ENHORABUENA");
+        assertThat(paraBeto.getSubject()).isEqualTo("¡Has ganado «El favorito del público»! · El hilo que nos une");
+        assertThat(parte(paraBeto, "text/plain")).contains("¡ENHORABUENA! Tu jersey ha ganado «El favorito del público».");
+    }
+
+    @Test
+    void elAvisoDeVotoAnuladoDiceLosPuntosYElMotivo() throws Exception {
+        correo(CONFIG, "").enviarVotoAnulado("ana@test.com", "Ana", 3, "El jersey se ha retirado del concurso.");
+
+        assertThat(parte(smtp.getReceivedMessages()[0], "text/plain"))
+                .contains("Tu voto de 3 puntos ya no cuenta.")
+                .contains("Motivo: El jersey se ha retirado del concurso.")
+                .contains("puedes volver a dar esos puntos a otro jersey");
+    }
+
+    @Test
     void dentroDeUnaTransaccionEsperaAlCommit() throws Exception {
         TransactionSynchronizationManager.initSynchronization();
         try {
@@ -107,7 +159,7 @@ class CorreoServiceTest {
     @Test
     void sinRemitenteSeUsaLaCuentaSmtp() throws Exception {
         // Gmail exige que el remitente sea la misma cuenta con la que se entra
-        correo(new Correo("", "El hilo que nos une", true), "concurso.jerseys@gmail.com")
+        correo(new Correo("", "El hilo que nos une", true, Duration.ZERO), "concurso.jerseys@gmail.com")
                 .enviarVerificacion("ana@test.com", "Ana", "http://enlace");
 
         InternetAddress de = (InternetAddress) smtp.getReceivedMessages()[0].getFrom()[0];
@@ -123,7 +175,7 @@ class CorreoServiceTest {
     @Test
     void siElServidorNoRespondeElCorreoDePruebaDevuelveElError() {
         // Puerto 1: no hay ningún servidor escuchando
-        CorreoService roto = new CorreoService(clienteSmtp(1), CONFIG, "", Runnable::run);
+        CorreoService roto = new CorreoService(clienteSmtp(1), CONFIG, "", Runnable::run, Runnable::run);
 
         assertThatThrownBy(() -> roto.enviarPrueba("admin@test.com"))
                 .isInstanceOfSatisfying(ApiException.class, e -> {
@@ -137,15 +189,15 @@ class CorreoServiceTest {
 
     @Test
     void enProduccionSinServidorDeCorreoNoArranca() {
-        assertThatThrownBy(() -> new CorreoService(null, CONFIG, "", Runnable::run))
+        assertThatThrownBy(() -> new CorreoService(null, CONFIG, "", Runnable::run, Runnable::run))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("MAIL_HOST");
     }
 
     @Test
     void enDesarrolloSinServidorSeEscribeEnLaConsola() {
-        CorreoService desarrollo = new CorreoService(null, new Correo("", "El hilo que nos une", false), "",
-                Runnable::run);
+        CorreoService desarrollo = new CorreoService(null, new Correo("", "El hilo que nos une", false, Duration.ZERO),
+                "", Runnable::run, Runnable::run);
 
         assertThatCode(() -> desarrollo.enviarVerificacion("ana@test.com", "Ana", "http://enlace"))
                 .doesNotThrowAnyException();

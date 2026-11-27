@@ -27,7 +27,11 @@ public final class VotoDtos {
             @NotNull @Min(1) @Max(VotoService.MAX_VOTOS) Integer puntos
     ) {}
 
-    public record MiVotoResponse(Long jerseyId, String imagenUrl, int puntos, Instant fecha) {}
+    /** anulado = true → ese voto ya no cuenta (y puedes volver a dar esos puntos a otro jersey). */
+    public record MiVotoResponse(Long jerseyId, String imagenUrl, int puntos, Instant fecha, boolean anulado) {}
+
+    /** Puntos que te quedan por repartir, de mayor a menor. Vacío = ya has votado (o no es la votación). */
+    public record PuntosPendientesResponse(List<Integer> puntos) {}
 
     public record VotoAdminResponse(Long id, Long votanteId, String votanteEmail, Long jerseyId, int puntos, Instant fecha, String ipHash, String userAgent,
                                     boolean anulado) {}

@@ -32,7 +32,8 @@ public record AppProperties(
     public record Admin(String email, String password, String nombre) {}
 
     /** Ver CorreoService. remitente vacío = se usa el usuario SMTP. */
-    public record Correo(String remitente, String nombreRemitente, boolean obligatorio) {}
+    /** pausaMasivos: espera entre correo y correo al avisar a todos (para no pasar el límite del servidor). */
+    public record Correo(String remitente, String nombreRemitente, boolean obligatorio, Duration pausaMasivos) {}
 
     public record Cors(List<String> origenes) {}
 

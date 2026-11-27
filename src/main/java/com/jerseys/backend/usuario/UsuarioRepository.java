@@ -43,4 +43,7 @@ public interface UsuarioRepository extends JpaRepository<Usuario, Long> {
     List<Usuario> buscar(String texto);
 
     List<Usuario> findAllByOrderByFechaRegistroDesc();
+
+    /** A quién mandar los avisos del concurso: cuentas que pueden entrar. */
+    List<Usuario> findByVerificadoTrueAndActivoTrueAndBorradaEnIsNull();
 }

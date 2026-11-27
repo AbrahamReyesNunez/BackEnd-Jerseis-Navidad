@@ -60,8 +60,10 @@ public class FaseService {
                     "Las fechas deben ir en orden: inicio subida < fin subida <= inicio votación < fin votación "
                             + "< fin jurado <= publicación de resultados");
         }
-        cargar().cambiarFechas(f.inicioSubida(), f.finSubida(), f.inicioVotacion(), f.finVotacion(),
+        Configuracion c = cargar();
+        c.cambiarFechas(f.inicioSubida(), f.finSubida(), f.inicioVotacion(), f.finVotacion(),
                 f.finJurado(), f.publicacionResultados());
+        c.reiniciarAvisosPendientes(reloj.instant());
         return estado();
     }
 
@@ -70,7 +72,7 @@ public class FaseService {
                 .orElseThrow(() -> new IllegalStateException("Falta la fila de configuración (ver V1__esquema_inicial.sql)"));
     }
 
-    static Fase calcular(Configuracion c, Instant ahora) {
+    public static Fase calcular(Configuracion c, Instant ahora) {
         if (!c.estaCompleta() || ahora.isBefore(c.getInicioSubida())) {
             return Fase.PREPARACION;
         }

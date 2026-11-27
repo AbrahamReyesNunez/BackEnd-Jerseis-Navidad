@@ -14,6 +14,9 @@ public interface TokenVerificacionRepository extends JpaRepository<TokenVerifica
     /** El token más reciente de un usuario (lo usan los tests en lugar de leer el correo). */
     Optional<TokenVerificacion> findFirstByUsuarioEmailOrderByIdDesc(String email);
 
+    /** Al borrar la cuenta. */
+    void deleteByUsuario(Usuario usuario);
+
     /** Invalida los tokens de ese tipo que el usuario tenga sin usar (al pedir otro correo, o al usar uno). */
     @Modifying
     @Query("""
