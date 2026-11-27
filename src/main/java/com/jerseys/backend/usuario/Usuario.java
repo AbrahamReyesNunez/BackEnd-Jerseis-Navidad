@@ -72,6 +72,10 @@ public class Usuario {
     @Column(name = "version_sesion", nullable = false)
     private int versionSesion = 0;
 
+    /** Cuándo borró el usuario su cuenta (null = no está borrada). Ver borrarDatosPersonales(). */
+    @Column(name = "borrada_en")
+    private Instant borradaEn;
+
     // JPA necesita un constructor vacío
     protected Usuario() {
     }
@@ -105,8 +109,30 @@ public class Usuario {
         this.verificado = true;
     }
 
+    /**
+     * "Borrar mi cuenta": se quitan todos los datos personales, pero la fila se queda (con otro
+     * email y el nombre "Cuenta borrada") porque hay votos, jerseys y ganadores que apuntan a ella.
+     * Con el mismo email se puede volver a crear una cuenta nueva.
+     */
+    public void borrarDatosPersonales(String hashInservible, Instant momento) {
+        this.email = "borrada-" + id + "@cuenta-borrada.invalid";
+        this.emailNormalizado = this.email;
+        this.nombre = "Cuenta borrada";
+        this.passwordHash = hashInservible;
+        this.ipRegistroHash = null;
+        this.rol = Rol.USUARIO;
+        this.verificado = false;
+        this.activo = false;
+        this.versionSesion++; // cierra todas sus sesiones
+        this.borradaEn = momento;
+    }
+
+    public boolean estaBorrada() {
+        return borradaEn != null;
+    }
+
     public boolean puedeIniciarSesion() {
-        return verificado && activo;
+        return verificado && activo && !estaBorrada();
     }
 
     // ----- Getters y setters -----
@@ -116,6 +142,7 @@ public class Usuario {
     public String getEmailNormalizado() { return emailNormalizado; }
     public String getNombre() { return nombre; }
     public int getVersionSesion() { return versionSesion; }
+    public Instant getBorradaEn() { return borradaEn; }
     public String getPasswordHash() { return passwordHash; }
     public Rol getRol() { return rol; }
     public void setRol(Rol rol) { this.rol = rol; }

@@ -153,6 +153,29 @@ alert(datos.mensaje);   // OK → "Contraseña cambiada..." y llevarle al login
 
 Al cambiar la contraseña **se cierran todas las sesiones abiertas** de esa cuenta: los tokens anteriores dan `401`, también en otros navegadores. Si la cuenta no estaba verificada, queda verificada (el enlace le llegó a su correo).
 
+**Mi cuenta** (con la sesión iniciada; las dos piden la contraseña actual):
+
+```js
+const h = { "Content-Type": "application/json", Authorization: "Bearer " + token };
+
+// Cambiar la contraseña. Cierra la sesión en los demás navegadores y devuelve un token NUEVO:
+// hay que guardarlo en lugar del anterior, o la siguiente petición dará 401.
+const r = await fetch("/api/cuenta/cambiar-password", {
+  method: "POST", headers: h, body: JSON.stringify({ passwordActual, passwordNueva }),
+});
+if (r.ok) sessionStorage.setItem("token", (await r.json()).token);
+// Error PASSWORD_INCORRECTA (400) si la actual no es correcta
+
+// Borrar la cuenta (pedid confirmación antes: no se puede deshacer). Después, borrad el token y al inicio.
+await fetch("/api/cuenta/borrar", { method: "POST", headers: h, body: JSON.stringify({ password }) });
+```
+
+Qué pasa al borrar la cuenta:
+- **Siempre** se borran los datos personales (email, nombre, contraseña, IP) y se cierran las sesiones. Con ese email se puede crear otra cuenta.
+- **Hasta que acaba la votación:** se retira su jersey (y se borran las fotos) y se borran los votos que había dado. A quien hubiera votado su jersey le llega un correo: ese voto ya no cuenta.
+- **Después de la votación:** los premios ya se están decidiendo, así que el jersey y los votos se quedan (sin nombre ni IP) para que los ganadores no cambien por sorpresa. Aparece como "Cuenta borrada".
+- Un **admin** no puede borrar su cuenta (`ADMIN_NO_PUEDE_BORRARSE`): os podríais quedar sin ninguno. Que otro admin le quite el rol antes.
+
 **Votar** (los 3 de golpe: 3, 2 y 1 puntos a jerseys distintos):
 
 ```js
@@ -164,6 +187,18 @@ await fetch("/api/votos", {
   ]}),
 });
 ```
+
+**Volver a votar.** Si a alguien le anulan un voto (lo anula el admin, o se retira el jersey que votó), le llega un correo y, **mientras dure la votación, puede volver a dar esos puntos** a otro jersey. Sus otros votos siguen contando y no se tocan. Para la pantalla de votar, preguntad siempre qué puntos le quedan:
+
+```js
+const h = { Authorization: "Bearer " + token };
+// [3, 2, 1] si aún no ha votado · [3] si le anularon el de 3 puntos · [] si ya ha votado
+const { puntos } = await (await fetch("/api/votos/pendientes", { headers: h })).json();
+// Sus votos; anulado: true = ya no cuenta (enseñadlo tachado, por ejemplo)
+const mios = await (await fetch("/api/votos/mios", { headers: h })).json();
+```
+
+Si `puntos` está vacío, enseñad "Ya has votado". Si no, que reparta **exactamente esos puntos** con el mismo `POST /api/votos` de arriba, a jerseys que no haya votado ya. Si elige el jersey cuyo voto le anularon: `400 JERSEY_YA_VOTADO`.
 
 **Jurado** (solo rol `JURADO`). Votan en el voto popular de arriba como todo el mundo. Después, en la fase `DECISION_JURADO`, se reúnen **en persona**, lo hablan y uno de ellos marca en la web el ganador de cada una de las 4 categorías:
 
@@ -355,6 +390,8 @@ src/main/java/com/jerseys/backend/
 ├── voto/        voto popular 3-2-1 y sus reglas
 ├── ranking/     clasificación del voto popular con puntos (solo admin)
 ├── premio/      categorías, ganadores que elige el jurado y resultados
+├── cuenta/      cambiar la contraseña y borrar la cuenta
+├── aviso/       avisos por correo a todos al cambiar de fase
 ├── admin/       panel de administración
 ├── correo/      envío de correos
 ├── comun/       errores, hash, utilidades compartidas
@@ -444,6 +481,22 @@ Las opciones A y B quedan como alternativa por si el correo del centro diera pro
 2. En **SMTP & API** están el *login* SMTP y la *clave* SMTP.
 3. Variables: `MAIL_HOST=smtp-relay.brevo.com`, `MAIL_PORT=587`, `MAIL_USUARIO=<login SMTP>`, `MAIL_PASSWORD=<clave SMTP>` y `MAIL_REMITENTE=<el email verificado>`.
 
+**Qué correos manda el backend:**
+
+| Cuándo | A quién |
+| --- | --- |
+| Al registrarse (enlace para activar la cuenta) | Quien se registra |
+| "¿Has olvidado tu contraseña?" | Quien lo pide |
+| Un admin retira tu jersey (con el motivo) | El autor |
+| Uno de tus votos deja de contar: lo anula el admin, o se retira el jersey que votaste. Puede volver a dar esos puntos | Quien votó |
+| **Empieza la votación** | Todos* |
+| **Se cierra la votación** | Todos* |
+| **Se publican los ganadores** (a los ganadores, con su premio) | Todos* |
+
+\* "Todos" = las cuentas verificadas y activas. Estos tres avisos los manda solo el backend: cada minuto mira en qué fase estamos y, si ha empezado una nueva, manda el aviso **una vez** (apunta en la BD que ya lo ha mandado). Si el admin cambia las fechas y una fase vuelve a quedar en el futuro, su aviso se podrá mandar otra vez.
+
+> ⚠️ **Límite del servidor de correo.** Los servidores de correo suelen limitar cuántos correos se pueden mandar por hora, y si se pasa, rechazan también los de verificación. Por eso los avisos a todos salen **uno a uno, con 2 segundos de pausa** (como mucho 1.800 por hora): con 300 participantes tardan unos 10 minutos. Preguntad al responsable del correo del centro cuál es su límite y, si es más bajo, subid `CORREO_PAUSA_MASIVOS` (p. ej. `10s` = 360 por hora).
+
 **Comprobarlo:** arranca el backend con esas variables, entra como admin en Swagger y ejecuta `POST /api/admin/correo/prueba`. Te llegará un correo a tu email de admin. Si falla, la respuesta trae el error que da el servidor de correo (contraseña mal puesta, puerto bloqueado…).
 
 Para probarlo **en tu ordenador** con un correo de verdad, define las variables en la misma terminal antes de arrancar. La contraseña se pide con `Read-Host`: así **no se ve en pantalla ni se guarda en el historial** de PowerShell (si la escribieras en el comando, quedaría guardada en texto plano en tu PC):
@@ -466,6 +519,15 @@ Las variables solo duran mientras esa terminal esté abierta. Al cerrarla, desap
 ```
 
 Los tests arrancan un **PostgreSQL embebido** automáticamente (no necesitas tenerlo instalado) y prueban el concurso de principio a fin. **Ejecutadlos antes de cada Pull Request.**
+
+### Tests automáticos en GitHub
+
+Además, **GitHub los ejecuta solo** en cada Pull Request y cada vez que se fusiona algo en `main` (archivo `.github/workflows/tests.yml`). En el PR aparece:
+
+- ✅ **All checks have passed**: todos los tests pasan, se puede fusionar.
+- ❌ **Some checks were not successful**: algo se ha roto. Pulsa **Details** para ver qué test falla y por qué; el detalle de cada test está en **Summary → Artifacts → informes-de-tests**. Arreglad el fallo y subid otro commit a la misma rama: los tests se vuelven a ejecutar solos.
+
+Tarda unos 3-5 minutos. Recomendación: en GitHub, **Settings → Branches → Add branch ruleset** para `main`, con "Require status checks to pass" y el check **Tests del backend**: así nadie puede fusionar un PR con los tests en rojo.
 
 ---
 
@@ -514,10 +576,13 @@ Ejemplo: "los jerseys tienen un título".
 - **Fases nuevas:** `PREPARACION` (antes de que empiece la subida o mientras el admin no ha puesto fechas), `DECISION_JURADO`, `ESPERA_RESULTADOS` y `RESULTADOS` (sustituye a `CERRADO`). Calendario: subida del 6 al 10 de diciembre, votación del 10 al 13, jurado del 13 al 14 y resultados el 16, siempre a las 12:00. Dos fechas nuevas en la configuración: `finJurado` y `publicacionResultados` (migración `V6__jurado_elige_ganadores.sql`).
 - **Sistema de votación 3-2-1:** cada usuario da 3 puntos a un jersey, 2 a otro y 1 a otro (antes era 6-5-4-3-2-1). Desempate en el ranking: más votos de 3, luego de 2, luego de 1.
 - **Sin mínimo de participantes:** si hay menos de 3 jerseys ajenos, se reparten solo las puntuaciones más altas (con 2 jerseys: 3 y 2; con 1: solo el 3).
+- **Volver a votar si te anulan un voto:** durante la votación, se pueden volver a dar los puntos anulados a otro jersey (`GET /api/votos/pendientes` dice cuáles). Los votos anulados se quedan en la BD para que el admin los vea; los índices únicos de `votos` solo cuentan los no anulados (migración `V9__volver_a_votar.sql`).
 - **Un jersey por persona** (se probó con 3 y al final se quedó en 1; cada jersey con una o dos fotos). Los eliminados por el admin no cuentan: si te retiran el tuyo, puedes subir otro. Si ya tienes uno: `409 LIMITE_DE_JERSEYS`. El límite es `JerseyService.MAX_JERSEYS_POR_USUARIO`. `GET /api/jerseys/mios` devuelve `{ maximo, activos, jerseys: [...] }`: el activo y los eliminados, con su motivo (lista vacía si no hay ninguno). La migración `V3__tres_jerseys_por_usuario.sql` quitó el índice único de la BD; ahora el límite lo controla `JerseyService`, que bloquea al usuario mientras sube para que un doble clic no cuele dos.
 - **Rol `JURADO` y 5 premios** (bases, apartado 5). `POPULAR` lo decide el voto popular, en el que el jurado vota como uno más. `DIVERTIDO`, `ORIGINAL`, `NAVIDENO` y `EXTRAVAGANTE` los decide el jurado reunido en persona: no votan con puntos, marcan directamente el ganador de cada categoría (`/api/jurado/**`, ver "Jurado" en la sección 2). Al principio el jurado votaba 3-2-1 en cada categoría (migración V4); se cambió en V6, que borra esos votos y la columna `votos.categoria` y crea la tabla `ganadores_categoria`. El admin nombra jurado con `PATCH /api/admin/usuarios/{id}/rol` `{"rol":"JURADO"}`.
 - **Un jersey, un premio:** el ganador popular no aparece para el jurado y un jersey no puede ganar dos categorías (`409 YA_TIENE_PREMIO`; la BD también lo impide con `UNIQUE (jersey_id)`). Quien marca no puede elegir su propio jersey (`JERSEY_PROPIO`).
 - **Sin rol `PROFESOR`:** solo el `ADMIN` ve los votos y el ranking. Los que fueran profesores pasan a `USUARIO` (migración V6). Los ganadores, sin puntos, se publican para todos en `GET /api/resultados` a partir del 16.
 - **Dos fotos por jersey:** delante (`foto`, obligatoria) y detrás (`fotoTrasera`, opcional). Las dos pasan las mismas comprobaciones (formato, caras, contenido inapropiado); si una falla no se guarda ninguna. Las respuestas traen `imagenTraseraUrl` (`null` si no hay). Columna `jerseys.imagen_trasera_nombre` (migración `V5__foto_trasera_y_mayor_18.sql`).
 - **Recuperar la contraseña:** `POST /api/auth/olvide-password` y `POST /api/auth/restablecer-password` (ver sección 2). El enlace dura 1 hora y es de un solo uso; pedir otro anula el anterior. En la BD no se guarda el token del enlace sino su HMAC, así que leyendo la BD no se pueden cambiar contraseñas ajenas. Cada JWT lleva la `version_sesion` del usuario: al cambiar la contraseña sube en 1 y los JWT viejos dejan de valer. Límite: 10 peticiones cada 10 minutos por IP (`LIMITE_RECUPERAR`). Migración `V7__recuperar_password.sql`.
+- **Borrar la cuenta y cambiar la contraseña:** `POST /api/cuenta/borrar` y `POST /api/cuenta/cambiar-password` (ver "Mi cuenta" en la sección 2). La fila del usuario no se borra: se le quitan los datos personales y se marca `usuarios.borrada_en`, porque hay votos, jerseys y ganadores que apuntan a ella (migración `V8__borrar_cuenta_y_avisos.sql`). El admin ya no puede cambiar el rol ni desbloquear una cuenta borrada (`409 CUENTA_BORRADA`).
+- **Avisos por correo:** al empezar y cerrarse la votación, al publicar los ganadores y cuando un voto deja de contar (ver "Qué correos manda el backend"). Las fechas de envío se guardan en `configuracion` (V8).
 - **Solo mayores de 18:** la casilla del registro pasa de `mayorDe14` a `mayorDe18` ("Debes tener 18 años o más para participar"). En la BD, `mayor_14_confirmado` se sustituye por `mayor_18_confirmado`; las cuentas que ya existían quedan en `false`, porque confirmaron 14 y no 18 (migración V5).

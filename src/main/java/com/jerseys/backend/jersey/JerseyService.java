@@ -170,6 +170,25 @@ public class JerseyService {
         return aAdmin(jersey);
     }
 
+    /**
+     * El autor ha borrado su cuenta: se retiran sus jerseys del concurso y se borran sus fotos.
+     * Devuelve los que se han retirado (para avisar a quien los hubiera votado).
+     */
+    @Transactional
+    public List<Jersey> retirarPorBajaDelAutor(Long usuarioId) {
+        List<Jersey> retirados = jerseys.findByUsuarioIdOrderByFechaSubidaDesc(usuarioId).stream()
+                .filter(j -> j.getEstado() != EstadoJersey.ELIMINADO)
+                .toList();
+        for (Jersey jersey : retirados) {
+            jersey.eliminar(jersey.getUsuario(), "El autor ha borrado su cuenta", reloj.instant());
+            borrarSinFallar(jersey.getImagenNombre());
+            if (jersey.getImagenTraseraNombre() != null) {
+                borrarSinFallar(jersey.getImagenTraseraNombre());
+            }
+        }
+        return retirados;
+    }
+
     /** URL pública de la foto de delante. */
     public String url(Jersey jersey) {
         return props.imagenes().urlBase() + jersey.getImagenNombre();

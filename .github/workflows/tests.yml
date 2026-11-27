@@ -1,0 +1,53 @@
+# =====================================================================
+# Tests automáticos en GitHub (GitHub Actions).
+#
+# Cada vez que alguien abre o actualiza un Pull Request, o se fusiona algo en
+# main, GitHub arranca un ordenador Linux, descarga el proyecto y ejecuta
+# todos los tests (.\mvnw.cmd test). En el PR sale ✅ si pasan o ❌ si no.
+#
+# Si sale ❌: pulsa "Details" para ver qué test ha fallado. Abajo, en
+# "Artifacts", está "informes-de-tests" con el detalle de cada test.
+# =====================================================================
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Solo necesita leer el código
+permissions:
+  contents: read
+
+# Si subes otro commit al mismo PR, se cancela la ejecución anterior (ya no sirve)
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Tests del backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v7
+
+      - name: Instalar Java 21 (el mismo que tendrá el servidor)
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven   # guarda las librerías descargadas para que la próxima vez vaya más rápido
+
+      - name: Ejecutar los tests
+        run: ./mvnw -B -ntp test
+
+      - name: Guardar los informes si algo falla
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: informes-de-tests
+          path: target/surefire-reports/
+          retention-days: 7

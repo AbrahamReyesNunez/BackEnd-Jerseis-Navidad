@@ -49,7 +49,11 @@ public class AdminUsuariosService {
     }
 
     private Usuario cargar(Long id) {
-        return usuarios.findById(id)
+        Usuario usuario = usuarios.findById(id)
                 .orElseThrow(() -> ApiException.noEncontrado("USUARIO_NO_ENCONTRADO", "No existe ese usuario"));
+        if (usuario.estaBorrada()) {
+            throw ApiException.conflicto("CUENTA_BORRADA", "Esa cuenta la borró su dueño: ya no se puede cambiar");
+        }
+        return usuario;
     }
 }

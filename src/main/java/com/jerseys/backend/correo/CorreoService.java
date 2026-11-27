@@ -20,6 +20,13 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.io.UnsupportedEncodingException;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -33,7 +40,10 @@ import static org.springframework.web.util.HtmlUtils.htmlEscape;
  *  1. Se envían EN SEGUNDO PLANO: el usuario no espera a que el servidor de correo conteste.
  *  2. Se envían DESPUÉS de que la base de datos confirme los cambios (commit). Si el registro
  *     fallara a mitad, no habríamos mandado un enlace a una cuenta que no existe.
- *  3. Si no hay servidor SMTP (spring.mail.host vacío), el correo se escribe en la consola.
+ *  3. Los avisos a TODOS (empieza la votación, se cierra, ganadores) van por otro hilo, uno detrás
+ *     de otro y con una pausa (app.correo.pausa-masivos), para no pasar el límite de correos por
+ *     hora del servidor. Mientras, los correos normales (verificación...) siguen saliendo al momento.
+ *  4. Si no hay servidor SMTP (spring.mail.host vacío), el correo se escribe en la consola.
  *     Eso solo se permite si app.correo.obligatorio=false (desarrollo y tests): en producción
  *     la aplicación NO arranca sin correo, porque nadie podría activar su cuenta.
  */
@@ -45,9 +55,22 @@ public class CorreoService {
     /** Un correo listo para enviar: versión en texto plano y versión HTML. */
     private record Mensaje(String para, String asunto, String texto, String html) {}
 
+    /** A quién va un aviso para todos. */
+    public record Destinatario(String email, String nombre) {}
+
+    /** Un premio en el correo de resultados (autor = null si quedó desierto). */
+    public record PremioTexto(String premio, String autor) {}
+
+    /** "13 de diciembre a las 12:00", en hora de España. */
+    private static final DateTimeFormatter FECHA = DateTimeFormatter
+            .ofPattern("d 'de' MMMM 'a las' HH:mm", Locale.of("es", "ES"))
+            .withZone(ZoneId.of("Europe/Madrid"));
+
     private final JavaMailSender mail; // null = no hay servidor SMTP: se escribe en la consola
     private final InternetAddress remitente;
     private final Executor envios;
+    private final Executor masivos;
+    private final Duration pausaMasivos;
 
     @Autowired // Spring usa este constructor; el otro es para los tests
     public CorreoService(ObjectProvider<JavaMailSender> proveedor, AppProperties props,
@@ -55,12 +78,16 @@ public class CorreoService {
                          @Value("${spring.mail.username:}") String usuarioSmtp) {
         this(hostSmtp.isBlank() ? null : proveedor.getIfAvailable(), props.correo(), usuarioSmtp,
                 // Dos hilos para enviar: suficiente para un concurso y no satura al servidor de correo
-                Executors.newFixedThreadPool(2, tarea -> new Thread(tarea, "envio-correo")));
+                Executors.newFixedThreadPool(2, tarea -> new Thread(tarea, "envio-correo")),
+                // Y uno aparte para los avisos a todos, que van despacio
+                Executors.newSingleThreadExecutor(tarea -> new Thread(tarea, "envio-avisos")));
     }
 
-    CorreoService(JavaMailSender mail, Correo config, String usuarioSmtp, Executor envios) {
+    CorreoService(JavaMailSender mail, Correo config, String usuarioSmtp, Executor envios, Executor masivos) {
         this.mail = mail;
         this.envios = envios;
+        this.masivos = masivos;
+        this.pausaMasivos = config.pausaMasivos() == null ? Duration.ZERO : config.pausaMasivos();
         if (mail == null) {
             if (config.obligatorio()) {
                 throw new IllegalStateException("No hay servidor de correo configurado: define MAIL_HOST, "
@@ -147,6 +174,119 @@ public class CorreoService {
                         null, null, null)));
     }
 
+    /** Uno de tus votos ya no cuenta: lo ha anulado el admin o se ha retirado el jersey. */
+    public void enviarVotoAnulado(String destinatario, String nombre, int puntos, String motivo) {
+        String puntosTexto = puntos == 1 ? "1 punto" : puntos + " puntos";
+        enviarDespuesDelCommit(new Mensaje(destinatario, "Uno de tus votos ya no cuenta · El hilo que nos une",
+                """
+                Hola %s:
+
+                Tu voto de %s ya no cuenta.
+                Motivo: %s
+
+                Mientras dure la votación, puedes volver a dar esos puntos a otro jersey.
+                El resto de tus votos siguen contando.
+                """.formatted(nombre, puntosTexto, motivo),
+                plantilla("Uno de tus votos ya no cuenta",
+                        "<p>Hola " + htmlEscape(nombre) + ":</p>"
+                                + "<p>Tu voto de <strong>" + puntosTexto + "</strong> ya no cuenta.</p>"
+                                + "<p><strong>Motivo:</strong> " + htmlEscape(motivo) + "</p>"
+                                + "<p>Mientras dure la votación, <strong>puedes volver a dar esos puntos a otro "
+                                + "jersey</strong>. El resto de tus votos siguen contando.</p>",
+                        null, null, null)));
+    }
+
+    // ----- Avisos a todos los participantes (ver aviso/AvisosService) -----
+
+    public void enviarVotacionAbierta(List<Destinatario> destinatarios, Instant finVotacion, String enlace) {
+        String hasta = FECHA.format(finVotacion);
+        enviarATodosDespuesDelCommit(destinatarios.stream().map(d -> new Mensaje(d.email(),
+                "¡Ya puedes votar! · El hilo que nos une",
+                """
+                Hola %s:
+
+                ¡Empieza la votación del concurso de jerseys navideños «El hilo que nos une»!
+                Entra, mira los jerseys y reparte tus puntos: 3 a tu favorito, 2 al segundo y 1 al tercero.
+                Tienes hasta el %s.
+
+                %s
+                """.formatted(d.nombre(), hasta, enlace),
+                plantilla("¡Ya puedes votar!",
+                        "<p>Hola " + htmlEscape(d.nombre()) + ":</p>"
+                                + "<p>¡Empieza la votación del concurso de jerseys navideños "
+                                + "<strong>«El hilo que nos une»</strong>! Entra, mira los jerseys y reparte tus "
+                                + "puntos: 3 a tu favorito, 2 al segundo y 1 al tercero.</p>"
+                                + "<p>Tienes hasta el <strong>" + hasta + "</strong>.</p>",
+                        "Ir a votar", enlace, null))).toList());
+    }
+
+    public void enviarVotacionCerrada(List<Destinatario> destinatarios, Instant publicacion, String enlace) {
+        String cuando = FECHA.format(publicacion);
+        enviarATodosDespuesDelCommit(destinatarios.stream().map(d -> new Mensaje(d.email(),
+                "Se ha cerrado la votación · El hilo que nos une",
+                """
+                Hola %s:
+
+                La votación del concurso «El hilo que nos une» ha terminado. ¡Gracias por participar!
+                Ahora el jurado decide los premios de cada categoría.
+                Los ganadores se publican el %s.
+
+                %s
+                """.formatted(d.nombre(), cuando, enlace),
+                plantilla("Se ha cerrado la votación",
+                        "<p>Hola " + htmlEscape(d.nombre()) + ":</p>"
+                                + "<p>La votación del concurso <strong>«El hilo que nos une»</strong> ha terminado. "
+                                + "¡Gracias por participar!</p>"
+                                + "<p>Ahora el jurado decide los premios de cada categoría. Los ganadores se "
+                                + "publican el <strong>" + cuando + "</strong>.</p>",
+                        "Ir a la web", enlace, null))).toList());
+    }
+
+    /**
+     * Los ganadores. premioPorEmail: a los ganadores (email → nombre del premio) les llega
+     * además la enhorabuena.
+     */
+    public void enviarResultados(List<Destinatario> destinatarios, List<PremioTexto> premios,
+                                 Map<String, String> premioPorEmail, String enlace) {
+        StringBuilder texto = new StringBuilder();
+        StringBuilder html = new StringBuilder("<ul style=\"padding-left:20px\">");
+        for (PremioTexto p : premios) {
+            String autor = p.autor() == null ? "Desierto" : p.autor();
+            texto.append("  - ").append(p.premio()).append(": ").append(autor).append('\n');
+            html.append("<li style=\"margin:6px 0\"><strong>").append(htmlEscape(p.premio())).append(":</strong> ")
+                    .append(htmlEscape(autor)).append("</li>");
+        }
+        html.append("</ul>");
+
+        enviarATodosDespuesDelCommit(destinatarios.stream().map(d -> {
+            String premioGanado = premioPorEmail.get(d.email());
+            String enhorabuena = premioGanado == null ? ""
+                    : "¡ENHORABUENA! Tu jersey ha ganado «" + premioGanado + "».\n\n";
+            String enhorabuenaHtml = premioGanado == null ? ""
+                    : "<p style=\"font-size:17px\"><strong>¡Enhorabuena! Tu jersey ha ganado «"
+                    + htmlEscape(premioGanado) + "».</strong></p>";
+            return new Mensaje(d.email(),
+                    premioGanado == null ? "¡Ya tenemos ganadores! · El hilo que nos une"
+                            : "¡Has ganado «" + premioGanado + "»! · El hilo que nos une",
+                    """
+                    Hola %s:
+
+                    %sYa están los ganadores del concurso de jerseys navideños «El hilo que nos une»:
+
+                    %s
+                    ¡Gracias a todos por participar!
+
+                    %s
+                    """.formatted(d.nombre(), enhorabuena, texto, enlace),
+                    plantilla("¡Ya tenemos ganadores!",
+                            "<p>Hola " + htmlEscape(d.nombre()) + ":</p>" + enhorabuenaHtml
+                                    + "<p>Ya están los ganadores del concurso de jerseys navideños "
+                                    + "<strong>«El hilo que nos une»</strong>:</p>" + html
+                                    + "<p>¡Gracias a todos por participar!</p>",
+                            "Ver los ganadores", enlace, null));
+        }).toList());
+    }
+
     /**
      * Correo de prueba para comprobar la configuración (lo usa el admin desde el panel).
      * A diferencia del resto, se envía AHORA y, si falla, devuelve el error en vez de solo apuntarlo.
@@ -172,10 +312,44 @@ public class CorreoService {
     // ===================== Cómo se envía =====================
 
     private void enviarDespuesDelCommit(Mensaje mensaje) {
-        Runnable tarea = mail == null
+        despuesDelCommit(mail == null
                 ? () -> escribirEnConsola(mensaje)
-                : () -> envios.execute(() -> enviarSinFallar(mensaje));
+                : () -> envios.execute(() -> enviarSinFallar(mensaje)));
+    }
 
+    private void enviarATodosDespuesDelCommit(List<Mensaje> mensajes) {
+        if (mensajes.isEmpty()) {
+            return;
+        }
+        despuesDelCommit(mail == null
+                ? () -> {
+                    // En la consola, solo el primero: con cientos de usuarios no se vería nada
+                    log.info("Aviso «{}» para {} personas. Este es el primero:", mensajes.get(0).asunto(),
+                            mensajes.size());
+                    escribirEnConsola(mensajes.get(0));
+                }
+                : () -> masivos.execute(() -> enviarUnoTrasOtro(mensajes)));
+    }
+
+    private void enviarUnoTrasOtro(List<Mensaje> mensajes) {
+        for (int i = 0; i < mensajes.size(); i++) {
+            if (i > 0 && !pausaMasivos.isZero()) {
+                try {
+                    Thread.sleep(pausaMasivos.toMillis());
+                } catch (InterruptedException e) {
+                    // Se está apagando la aplicación
+                    Thread.currentThread().interrupt();
+                    log.warn("Aviso «{}» interrumpido: quedan {} correos sin enviar", mensajes.get(i).asunto(),
+                            mensajes.size() - i);
+                    return;
+                }
+            }
+            enviarSinFallar(mensajes.get(i));
+        }
+        log.info("Aviso «{}» enviado a {} personas", mensajes.get(0).asunto(), mensajes.size());
+    }
+
+    private static void despuesDelCommit(Runnable tarea) {
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             // Estamos dentro de una transacción (@Transactional): esperamos a que termine bien
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
@@ -269,11 +443,17 @@ public class CorreoService {
         return texto == null || texto.isBlank();
     }
 
-    /** Al apagar la aplicación, deja terminar los correos que estén a medias. */
+    /**
+     * Al apagar la aplicación, deja terminar los correos normales que estén a medias.
+     * Un aviso a todos puede tardar mucho (por la pausa): ese se corta, y queda apuntado en el log.
+     */
     @PreDestroy
     void apagar() {
         if (envios instanceof ExecutorService servicio) {
             servicio.shutdown();
+        }
+        if (masivos instanceof ExecutorService servicio) {
+            servicio.shutdownNow();
         }
     }
 }
