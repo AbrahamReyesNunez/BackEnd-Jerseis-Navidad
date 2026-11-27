@@ -1,0 +1,161 @@
+package com.jerseys.backend.correo;
+
+import com.icegreen.greenmail.junit5.GreenMailExtension;
+import com.icegreen.greenmail.util.ServerSetupTest;
+import com.jerseys.backend.comun.ApiException;
+import com.jerseys.backend.config.AppProperties.Correo;
+import jakarta.mail.Multipart;
+import jakarta.mail.Part;
+import jakarta.mail.internet.InternetAddress;
+import jakarta.mail.internet.MimeMessage;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
+import org.springframework.http.HttpStatus;
+import org.springframework.mail.javamail.JavaMailSenderImpl;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+/**
+ * Prueba el envío de correos con GreenMail: un servidor SMTP FALSO que arranca dentro del test
+ * y se queda con los correos que le llegan, para poder mirarlos. No sale nada a Internet.
+ */
+class CorreoServiceTest {
+
+    @RegisterExtension
+    static GreenMailExtension smtp = new GreenMailExtension(ServerSetupTest.SMTP);
+
+    private static final Correo CONFIG = new Correo("concurso@test.com", "El hilo que nos une", true);
+
+    /** Runnable::run = envía en el mismo hilo, para no tener que esperar en los tests. */
+    private CorreoService correo(Correo config, String usuarioSmtp) {
+        return new CorreoService(clienteSmtp(ServerSetupTest.SMTP.getPort()), config, usuarioSmtp, Runnable::run);
+    }
+
+    private static JavaMailSenderImpl clienteSmtp(int puerto) {
+        JavaMailSenderImpl cliente = new JavaMailSenderImpl();
+        cliente.setHost("localhost");
+        cliente.setPort(puerto);
+        return cliente;
+    }
+
+    @Test
+    void elCorreoDeVerificacionLlegaConTextoYHtml() throws Exception {
+        String enlace = "http://localhost:8080/api/auth/verificar?token=abc&x=1";
+        correo(CONFIG, "").enviarVerificacion("ana@test.com", "Ana <b>", enlace);
+
+        MimeMessage recibido = smtp.getReceivedMessages()[0];
+        InternetAddress de = (InternetAddress) recibido.getFrom()[0];
+        assertThat(de.getAddress()).isEqualTo("concurso@test.com");
+        assertThat(de.getPersonal()).isEqualTo("El hilo que nos une");
+        assertThat(recibido.getSubject()).isEqualTo("Confirma tu cuenta · El hilo que nos une");
+
+        // Versión en texto plano, para programas de correo que no muestran HTML
+        assertThat(parte(recibido, "text/plain")).contains(enlace).contains("Hola Ana <b>:");
+        // Versión HTML: con el botón, y lo que escribe el usuario escapado (no puede meter HTML)
+        String html = parte(recibido, "text/html");
+        assertThat(html).contains("href=\"http://localhost:8080/api/auth/verificar?token=abc&amp;x=1\"")
+                .contains("Hola Ana &lt;b&gt;:")
+                .doesNotContain("Ana <b>");
+    }
+
+    @Test
+    void dentroDeUnaTransaccionEsperaAlCommit() throws Exception {
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            correo(CONFIG, "").enviarJerseyEliminado("beto@test.com", "Beto", "Foto borrosa", true);
+            // Todavía no se ha enviado: la transacción no ha terminado
+            assertThat(smtp.getReceivedMessages()).isEmpty();
+
+            for (TransactionSynchronization s : TransactionSynchronizationManager.getSynchronizations()) {
+                s.afterCommit(); // lo que hace Spring cuando la BD confirma los cambios
+            }
+            assertThat(smtp.getReceivedMessages()).hasSize(1);
+            assertThat(parte(smtp.getReceivedMessages()[0], "text/plain")).contains("Motivo: Foto borrosa");
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+    }
+
+    @Test
+    void siLaTransaccionFallaNoSeEnvia() {
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            correo(CONFIG, "").enviarVerificacion("ana@test.com", "Ana", "http://enlace");
+            // Rollback: Spring NO llama a afterCommit
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+        assertThat(smtp.getReceivedMessages()).isEmpty();
+    }
+
+    @Test
+    void sinRemitenteSeUsaLaCuentaSmtp() throws Exception {
+        // Gmail exige que el remitente sea la misma cuenta con la que se entra
+        correo(new Correo("", "El hilo que nos une", true), "concurso.jerseys@gmail.com")
+                .enviarVerificacion("ana@test.com", "Ana", "http://enlace");
+
+        InternetAddress de = (InternetAddress) smtp.getReceivedMessages()[0].getFrom()[0];
+        assertThat(de.getAddress()).isEqualTo("concurso.jerseys@gmail.com");
+    }
+
+    @Test
+    void elCorreoDePruebaLlega() {
+        correo(CONFIG, "").enviarPrueba("admin@test.com");
+        assertThat(smtp.getReceivedMessages()).hasSize(1);
+    }
+
+    @Test
+    void siElServidorNoRespondeElCorreoDePruebaDevuelveElError() {
+        // Puerto 1: no hay ningún servidor escuchando
+        CorreoService roto = new CorreoService(clienteSmtp(1), CONFIG, "", Runnable::run);
+
+        assertThatThrownBy(() -> roto.enviarPrueba("admin@test.com"))
+                .isInstanceOfSatisfying(ApiException.class, e -> {
+                    assertThat(e.getEstado()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+                    assertThat(e.getCodigo()).isEqualTo("CORREO_NO_ENVIADO");
+                });
+        // Y un correo normal no rompe la operación del usuario: solo se apunta en el log
+        assertThatCode(() -> roto.enviarVerificacion("ana@test.com", "Ana", "http://enlace"))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void enProduccionSinServidorDeCorreoNoArranca() {
+        assertThatThrownBy(() -> new CorreoService(null, CONFIG, "", Runnable::run))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("MAIL_HOST");
+    }
+
+    @Test
+    void enDesarrolloSinServidorSeEscribeEnLaConsola() {
+        CorreoService desarrollo = new CorreoService(null, new Correo("", "El hilo que nos une", false), "",
+                Runnable::run);
+
+        assertThatCode(() -> desarrollo.enviarVerificacion("ana@test.com", "Ana", "http://enlace"))
+                .doesNotThrowAnyException();
+        assertThatThrownBy(() -> desarrollo.enviarPrueba("admin@test.com"))
+                .isInstanceOfSatisfying(ApiException.class,
+                        e -> assertThat(e.getCodigo()).isEqualTo("CORREO_NO_CONFIGURADO"));
+    }
+
+    /** Busca dentro del correo la parte de ese tipo (text/plain o text/html) y devuelve su texto. */
+    private static String parte(Part parte, String tipo) throws Exception {
+        if (parte.isMimeType(tipo)) {
+            return (String) parte.getContent();
+        }
+        if (parte.isMimeType("multipart/*")) {
+            Multipart partes = (Multipart) parte.getContent();
+            for (int i = 0; i < partes.getCount(); i++) {
+                String encontrada = parte(partes.getBodyPart(i), tipo);
+                if (encontrada != null) {
+                    return encontrada;
+                }
+            }
+        }
+        return null;
+    }
+}

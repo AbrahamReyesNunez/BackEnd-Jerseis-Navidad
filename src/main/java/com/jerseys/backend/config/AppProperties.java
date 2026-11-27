@@ -31,7 +31,8 @@ public record AppProperties(
 
     public record Admin(String email, String password, String nombre) {}
 
-    public record Correo(String remitente) {}
+    /** Ver CorreoService. remitente vacío = se usa el usuario SMTP. */
+    public record Correo(String remitente, String nombreRemitente, boolean obligatorio) {}
 
     public record Cors(List<String> origenes) {}
 
