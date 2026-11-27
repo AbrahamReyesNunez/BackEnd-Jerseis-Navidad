@@ -60,6 +60,19 @@ public final class AuthDtos {
 
     public record ReenviarRequest(@NotBlank @Email String email) {}
 
+    /** "He olvidado mi contraseña": { "email": "ana@ejemplo.com" } */
+    public record OlvidePasswordRequest(@NotBlank(message = "El email es obligatorio") @Email String email) {}
+
+    /** Nueva contraseña, con el token del enlace del correo: { "token": "...", "password": "..." } */
+    public record RestablecerPasswordRequest(
+            @NotBlank(message = "Falta el token del enlace") @Size(max = 100) String token,
+
+            // Mismas reglas que en el registro
+            @NotBlank(message = "La contraseña es obligatoria")
+            @Size(min = 8, max = 72, message = "La contraseña debe tener entre 8 y 72 caracteres")
+            String password
+    ) {}
+
     public record UsuarioResponse(Long id, String email, String nombre, Rol rol) {
         public static UsuarioResponse de(Usuario u) {
             return new UsuarioResponse(u.getId(), u.getEmail(), u.getNombre(), u.getRol());

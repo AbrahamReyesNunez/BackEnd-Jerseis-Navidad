@@ -2,6 +2,7 @@ package com.jerseys.backend.seguridad;
 
 import com.jerseys.backend.config.AppProperties;
 import com.jerseys.backend.usuario.Usuario;
+import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
@@ -26,6 +27,12 @@ import java.util.Optional;
 @Service
 public class JwtService {
 
+    /** Nombre del dato del JWT con la versión de sesión del usuario (ver Usuario.versionSesion). */
+    private static final String CLAIM_VERSION_SESION = "ses";
+
+    /** Lo que sacamos de un JWT válido: de quién es y con qué versión de sesión se creó. */
+    public record TokenValido(Long usuarioId, int versionSesion) {}
+
     private final SecretKey clave;
     private final Duration duracion;
     private final Clock reloj;
@@ -44,6 +51,7 @@ public class JwtService {
         Instant ahora = reloj.instant();
         return Jwts.builder()
                 .subject(usuario.getId().toString())
+                .claim(CLAIM_VERSION_SESION, usuario.getVersionSesion())
                 .issuedAt(Date.from(ahora))
                 .expiration(Date.from(ahora.plus(duracion)))
                 .signWith(clave)
@@ -54,17 +62,20 @@ public class JwtService {
         return duracion.toSeconds();
     }
 
-    /** Devuelve el id del usuario si el token es válido (firma correcta y no caducado). */
-    public Optional<Long> validar(String token) {
+    /**
+     * Si el token es válido (firma correcta y no caducado), devuelve de quién es y su versión de sesión.
+     * Que la versión siga siendo la del usuario lo comprueba FiltroJwt, que es quien lee la BD.
+     */
+    public Optional<TokenValido> validar(String token) {
         try {
-            String sujeto = Jwts.parser()
+            Claims datos = Jwts.parser()
                     .verifyWith(clave)
                     .clock(() -> Date.from(reloj.instant()))
                     .build()
                     .parseSignedClaims(token)
-                    .getPayload()
-                    .getSubject();
-            return Optional.of(Long.valueOf(sujeto));
+                    .getPayload();
+            Integer version = datos.get(CLAIM_VERSION_SESION, Integer.class);
+            return Optional.of(new TokenValido(Long.valueOf(datos.getSubject()), version == null ? 0 : version));
         } catch (JwtException | IllegalArgumentException e) {
             return Optional.empty();
         }

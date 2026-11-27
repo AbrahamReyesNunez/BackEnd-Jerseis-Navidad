@@ -2,14 +2,17 @@ package com.jerseys.backend;
 
 import com.jayway.jsonpath.JsonPath;
 import com.jerseys.backend.auth.TokenVerificacionRepository;
+import com.jerseys.backend.correo.CorreoService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
@@ -38,6 +41,11 @@ import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.contains;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -67,6 +75,10 @@ class FlujoCompletoTest {
 
     @Autowired
     private TokenVerificacionRepository tokens;
+
+    /** El servicio de correo de verdad, pero "espiado": podemos ver con qué datos se le llama (p. ej. el enlace). */
+    @MockitoSpyBean
+    private CorreoService correo;
 
     private MockMvc mvc;
 
@@ -480,6 +492,87 @@ class FlujoCompletoTest {
     }
 
     @Test
+    void heOlvidadoMiContrasena() throws Exception {
+        // Usuaria propia de este test, desde otra IP para no mezclarse con los demás tests
+        String ip = "192.0.2.50";
+        mvc.perform(post("/api/auth/registro").with(desdeIp(ip)).contentType(MediaType.APPLICATION_JSON)
+                        .content(cuerpoRegistro("eva@test.com", "Eva")))
+                .andExpect(status().isCreated());
+        String tokenEmail = tokens.findFirstByUsuarioEmailOrderByIdDesc("eva@test.com").orElseThrow().getToken();
+        mvc.perform(get("/api/auth/verificar").param("token", tokenEmail)).andExpect(status().isFound());
+        String sesionVieja = login("eva@test.com", "password123");
+
+        // Un email que no existe recibe la MISMA respuesta (no revelamos quién está registrado)
+        String respuestaNoExiste = mvc.perform(post("/api/auth/olvide-password").with(desdeIp(ip))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"email\":\"nadie@test.com\"}"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        verify(correo, never()).enviarRecuperacionPassword(eq("nadie@test.com"), any(), any());
+
+        // Eva lo pide dos veces: solo vale el último enlace
+        for (int i = 0; i < 2; i++) {
+            String respuesta = mvc.perform(post("/api/auth/olvide-password").with(desdeIp(ip))
+                            .contentType(MediaType.APPLICATION_JSON).content("{\"email\":\"Eva@Test.com\"}"))
+                    .andExpect(status().isOk())
+                    .andReturn().getResponse().getContentAsString();
+            assertThat(respuesta).isEqualTo(respuestaNoExiste);
+        }
+        ArgumentCaptor<String> enlaces = ArgumentCaptor.forClass(String.class);
+        verify(correo, times(2)).enviarRecuperacionPassword(eq("eva@test.com"), eq("Eva"), enlaces.capture());
+        String primero = tokenDelEnlace(enlaces.getAllValues().get(0));
+        String ultimo = tokenDelEnlace(enlaces.getAllValues().get(1));
+        assertThat(enlaces.getValue()).startsWith("http://localhost:8080/restablecer-password.html?token=");
+
+        // En la BD no está el token, sino su HMAC: leyendo la BD no se puede usar
+        String guardado = tokens.findFirstByUsuarioEmailOrderByIdDesc("eva@test.com").orElseThrow().getToken();
+        assertThat(guardado).isNotEqualTo(ultimo).hasSize(64);
+
+        // El primer enlace ya no vale
+        mvc.perform(restablecer(primero, "nueva-clave-1"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.codigo").value("ENLACE_NO_VALIDO"));
+        // Contraseña demasiado corta → 400, y el enlace sigue sirviendo
+        mvc.perform(restablecer(ultimo, "corta"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.campos.password").exists());
+
+        mvc.perform(restablecer(ultimo, "nueva-clave-1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.mensaje").value("Contraseña cambiada. Ya puedes iniciar sesión con la nueva."));
+        // Un solo uso
+        mvc.perform(restablecer(ultimo, "otra-clave-2"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.codigo").value("ENLACE_NO_VALIDO"));
+
+        // La contraseña vieja ya no entra; la nueva sí
+        mvc.perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"eva@test.com\",\"password\":\"password123\"}"))
+                .andExpect(status().isUnauthorized());
+        String sesionNueva = login("eva@test.com", "nueva-clave-1");
+
+        // Las sesiones que estaban abiertas se han cerrado (por si era alguien con la contraseña vieja)
+        mvc.perform(get("/api/auth/yo").header("Authorization", "Bearer " + sesionVieja))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(get("/api/auth/yo").header("Authorization", "Bearer " + sesionNueva))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.email").value("eva@test.com"));
+
+        // Quien nunca verificó su email y pide cambiar la contraseña queda verificado:
+        // el enlace le ha llegado a su correo, así que el correo es suyo
+        mvc.perform(post("/api/auth/registro").with(desdeIp(ip)).contentType(MediaType.APPLICATION_JSON)
+                        .content(cuerpoRegistro("fede@test.com", "Fede")))
+                .andExpect(status().isCreated());
+        mvc.perform(post("/api/auth/olvide-password").with(desdeIp(ip))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"email\":\"fede@test.com\"}"))
+                .andExpect(status().isOk());
+        ArgumentCaptor<String> enlaceFede = ArgumentCaptor.forClass(String.class);
+        verify(correo).enviarRecuperacionPassword(eq("fede@test.com"), any(), enlaceFede.capture());
+        mvc.perform(restablecer(tokenDelEnlace(enlaceFede.getValue()), "clave-de-fede"))
+                .andExpect(status().isOk());
+        login("fede@test.com", "clave-de-fede");
+    }
+
+    @Test
     void swaggerPublicaElContratoDeLaApi() throws Exception {
         mvc.perform(get("/v3/api-docs"))
                 .andExpect(status().isOk())
@@ -488,6 +581,16 @@ class FlujoCompletoTest {
     }
 
     // ===================== Ayudantes =====================
+
+    private static MockHttpServletRequestBuilder restablecer(String token, String password) {
+        return post("/api/auth/restablecer-password").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"token\":\"%s\",\"password\":\"%s\"}".formatted(token, password));
+    }
+
+    /** El token que va al final del enlace del correo (…?token=XXXX). */
+    private static String tokenDelEnlace(String enlace) {
+        return enlace.substring(enlace.indexOf("token=") + "token=".length());
+    }
 
     /** Simula que la petición llega desde otra IP. */
     private static RequestPostProcessor desdeIp(String ip) {

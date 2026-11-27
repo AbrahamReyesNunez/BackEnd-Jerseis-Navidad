@@ -47,7 +47,9 @@ public class FiltroJwt extends OncePerRequestFilter {
             jwtService.validar(token)
                     // Consultamos la BD en cada petición: así, si el admin bloquea una cuenta
                     // o cambia un rol, el cambio se aplica al momento (sin esperar a que caduque el token).
-                    .flatMap(usuarios::findById)
+                    .flatMap(t -> usuarios.findById(t.usuarioId())
+                            // Si ha cambiado la contraseña después de crear este token, ya no vale
+                            .filter(u -> u.getVersionSesion() == t.versionSesion()))
                     .filter(u -> u.puedeIniciarSesion())
                     .ifPresent(u -> {
                         var principal = new UsuarioActual(u.getId(), u.getEmail(), u.getRol());

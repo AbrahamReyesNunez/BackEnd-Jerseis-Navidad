@@ -41,7 +41,7 @@ public record AppProperties(
     public record Ftp(String host, int puerto, String usuario, String password, String directorio, boolean ftps) {}
 
     /** Límites de peticiones por IP. Ver LimitadorPeticiones. */
-    public record Limites(Limite login, Limite registro, Limite reenviarVerificacion) {}
+    public record Limites(Limite login, Limite registro, Limite reenviarVerificacion, Limite recuperarPassword) {}
 
     /** Como máximo "capacidad" peticiones cada "periodo" (p. ej. 30 cada 1m). */
     public record Limite(int capacidad, Duration periodo) {}

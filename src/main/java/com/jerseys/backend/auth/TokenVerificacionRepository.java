@@ -9,13 +9,16 @@ import java.util.Optional;
 
 public interface TokenVerificacionRepository extends JpaRepository<TokenVerificacion, Long> {
 
-    Optional<TokenVerificacion> findByToken(String token);
+    Optional<TokenVerificacion> findByTokenAndTipo(String token, TokenVerificacion.Tipo tipo);
 
     /** El token más reciente de un usuario (lo usan los tests en lugar de leer el correo). */
     Optional<TokenVerificacion> findFirstByUsuarioEmailOrderByIdDesc(String email);
 
-    /** Invalida los tokens anteriores de un usuario (al reenviar el correo). */
+    /** Invalida los tokens de ese tipo que el usuario tenga sin usar (al pedir otro correo, o al usar uno). */
     @Modifying
-    @Query("UPDATE TokenVerificacion t SET t.usado = true WHERE t.usuario = :usuario AND t.usado = false")
-    void invalidarPendientes(Usuario usuario);
+    @Query("""
+            UPDATE TokenVerificacion t SET t.usado = true
+            WHERE t.usuario = :usuario AND t.tipo = :tipo AND t.usado = false
+            """)
+    void invalidarPendientes(Usuario usuario, TokenVerificacion.Tipo tipo);
 }

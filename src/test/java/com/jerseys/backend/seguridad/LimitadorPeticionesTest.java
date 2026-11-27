@@ -18,7 +18,7 @@ class LimitadorPeticionesTest {
 
     private final Limite tresPorHora = new Limite(3, Duration.ofHours(1));
     private final LimitadorPeticiones limitador =
-            new LimitadorPeticiones(new Limites(tresPorHora, tresPorHora, tresPorHora));
+            new LimitadorPeticiones(new Limites(tresPorHora, tresPorHora, tresPorHora, tresPorHora));
 
     @Test
     void dejaPasarHastaElLimiteYLuegoDa429() {

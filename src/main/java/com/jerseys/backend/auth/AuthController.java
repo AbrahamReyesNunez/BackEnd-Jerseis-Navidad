@@ -3,8 +3,10 @@ package com.jerseys.backend.auth;
 import com.jerseys.backend.auth.dto.AuthDtos.LoginRequest;
 import com.jerseys.backend.auth.dto.AuthDtos.LoginResponse;
 import com.jerseys.backend.auth.dto.AuthDtos.MensajeResponse;
+import com.jerseys.backend.auth.dto.AuthDtos.OlvidePasswordRequest;
 import com.jerseys.backend.auth.dto.AuthDtos.ReenviarRequest;
 import com.jerseys.backend.auth.dto.AuthDtos.RegistroRequest;
+import com.jerseys.backend.auth.dto.AuthDtos.RestablecerPasswordRequest;
 import com.jerseys.backend.auth.dto.AuthDtos.UsuarioResponse;
 import com.jerseys.backend.comun.ApiException;
 import com.jerseys.backend.comun.DatosCliente;
@@ -42,7 +44,7 @@ import java.net.URI;
  */
 @RestController
 @RequestMapping("/api/auth")
-@Tag(name = "Autenticación", description = "Registro, verificación de email y login")
+@Tag(name = "Autenticación", description = "Registro, verificación de email, login y recuperar la contraseña")
 public class AuthController {
 
     private final AuthService authService;
@@ -94,6 +96,24 @@ public class AuthController {
         limitador.comprobar(Accion.REENVIAR_VERIFICACION, DatosCliente.de(peticion).ip());
         authService.reenviarVerificacion(datos.email());
         return new MensajeResponse("Si la cuenta existe y no está verificada, te hemos enviado otro correo.");
+    }
+
+    @PostMapping("/olvide-password")
+    @Operation(summary = "«¿Has olvidado tu contraseña?»: manda al email un enlace (1 hora) para poner otra. "
+            + "Responde lo mismo aunque la cuenta no exista. 429 si hay demasiados intentos")
+    public MensajeResponse olvidePassword(@Valid @RequestBody OlvidePasswordRequest datos, HttpServletRequest peticion) {
+        limitador.comprobar(Accion.RECUPERAR_PASSWORD, DatosCliente.de(peticion).ip());
+        authService.olvidePassword(datos.email());
+        return new MensajeResponse("Si hay una cuenta con ese email, te hemos enviado un enlace para cambiar "
+                + "la contraseña. Revisa tu correo (y el spam).");
+    }
+
+    @PostMapping("/restablecer-password")
+    @Operation(summary = "Pone la contraseña nueva con el token del enlace del correo. "
+            + "Cierra todas las sesiones abiertas de esa cuenta")
+    public MensajeResponse restablecerPassword(@Valid @RequestBody RestablecerPasswordRequest datos) {
+        authService.restablecerPassword(datos.token(), datos.password());
+        return new MensajeResponse("Contraseña cambiada. Ya puedes iniciar sesión con la nueva.");
     }
 
     @PostMapping("/login")

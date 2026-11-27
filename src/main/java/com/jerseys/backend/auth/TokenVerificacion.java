@@ -15,12 +15,15 @@ import jakarta.persistence.Table;
 
 import java.time.Instant;
 
-/** Token de un solo uso que se manda por correo para verificar la cuenta. */
+/**
+ * Token de un solo uso que se manda por correo: para verificar la cuenta o para cambiar la contraseña.
+ * De los de RECUPERAR_PASSWORD no se guarda el token sino su HMAC (ver V7__recuperar_password.sql).
+ */
 @Entity
 @Table(name = "tokens_verificacion")
 public class TokenVerificacion {
 
-    public enum Tipo { VERIFICACION_EMAIL }
+    public enum Tipo { VERIFICACION_EMAIL, RECUPERAR_PASSWORD }
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -52,6 +55,10 @@ public class TokenVerificacion {
         this.token = token;
         this.tipo = tipo;
         this.expira = expira;
+    }
+
+    public boolean haCaducado(Instant ahora) {
+        return !ahora.isBefore(expira);
     }
 
     public boolean esValido(Instant ahora) {
