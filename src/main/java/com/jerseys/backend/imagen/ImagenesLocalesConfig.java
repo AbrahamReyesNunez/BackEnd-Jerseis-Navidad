@@ -9,8 +9,8 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import java.time.Duration;
 
 /**
- * Con el almacén local (en vuestro ordenador y en el VPS), el propio backend sirve las fotos
- * en /imagenes/<nombre>.jpg
+ * Con el almacén local (en vuestro ordenador), el propio backend sirve las fotos en /imagenes/<nombre>.jpg
+ * En producción las fotos van al FTP y las enseña otro servidor (ver GUIA.md, sección 11).
  */
 @Configuration
 @ConditionalOnProperty(name = "app.imagenes.almacen", havingValue = "local")
