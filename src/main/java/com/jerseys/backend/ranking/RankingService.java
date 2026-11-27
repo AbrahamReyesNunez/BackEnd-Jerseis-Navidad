@@ -4,7 +4,6 @@ import com.jerseys.backend.jersey.EstadoJersey;
 import com.jerseys.backend.jersey.Jersey;
 import com.jerseys.backend.jersey.JerseyRepository;
 import com.jerseys.backend.jersey.JerseyService;
-import com.jerseys.backend.voto.Categoria;
 import com.jerseys.backend.voto.Voto;
 import com.jerseys.backend.voto.VotoRepository;
 import com.jerseys.backend.voto.VotoService;
@@ -16,12 +15,13 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 /**
- * Calcula el ranking de una categoría (popular o una del jurado): suma de puntos de los
- * votos válidos (no anulados) de esa categoría.
- * Desempate: gana quien tenga más votos de 3; si siguen empatados, más de 2; luego más de 1.
+ * Calcula el ranking del voto popular: suma de puntos de los votos válidos (no anulados).
+ * Desempate: gana quien tenga más votos de 3; si siguen empatados, más de 2; luego más de 1;
+ * y si aun así empatan, el que se subió antes.
  *
  * Se calcula en Java porque es fácil de leer y, para un concurso de este tamaño,
  * rapidísimo. Con millones de votos convendría hacerlo en SQL (GROUP BY).
@@ -45,9 +45,9 @@ public class RankingService {
     }
 
     @Transactional(readOnly = true)
-    public List<PosicionRanking> calcular(Categoria categoria) {
-        // Votos válidos de esa categoría, agrupados por jersey
-        Map<Long, List<Voto>> votosPorJersey = votos.findValidosParaRanking(categoria).stream()
+    public List<PosicionRanking> calcular() {
+        // Votos válidos, agrupados por jersey
+        Map<Long, List<Voto>> votosPorJersey = votos.findValidosParaRanking().stream()
                 .collect(Collectors.groupingBy(v -> v.getJersey().getId()));
 
         // Partimos de TODOS los jerseys aprobados, para que salgan también los que tienen 0 votos
@@ -72,6 +72,15 @@ public class RankingService {
                     f.votos().size(), f.desglose()));
         }
         return ranking;
+    }
+
+    /**
+     * El ganador del voto popular: el primero del ranking. Vacío si nadie ha recibido ningún punto
+     * (no tiene sentido declarar ganador a un jersey con 0 puntos).
+     */
+    @Transactional(readOnly = true)
+    public Optional<PosicionRanking> ganadorPopular() {
+        return calcular().stream().findFirst().filter(p -> p.puntos() > 0);
     }
 
     private record Fila(Jersey jersey, List<Voto> votos) {

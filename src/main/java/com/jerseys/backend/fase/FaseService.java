@@ -45,19 +45,23 @@ public class FaseService {
         Configuracion c = cargar();
         Instant ahora = reloj.instant();
         return new FaseResponse(calcular(c, ahora), ahora, c.getInicioSubida(), c.getFinSubida(),
-                c.getInicioVotacion(), c.getFinVotacion());
+                c.getInicioVotacion(), c.getFinVotacion(), c.getFinJurado(), c.getPublicacionResultados());
     }
 
     @Transactional
     public FaseResponse cambiarFechas(CambiarFechasRequest f) {
         boolean ordenCorrecto = f.inicioSubida().isBefore(f.finSubida())
                 && !f.finSubida().isAfter(f.inicioVotacion())
-                && f.inicioVotacion().isBefore(f.finVotacion());
+                && f.inicioVotacion().isBefore(f.finVotacion())
+                && f.finVotacion().isBefore(f.finJurado())
+                && !f.finJurado().isAfter(f.publicacionResultados());
         if (!ordenCorrecto) {
             throw ApiException.peticionInvalida("FECHAS_INCORRECTAS",
-                    "Las fechas deben ir en orden: inicio subida < fin subida <= inicio votación < fin votación");
+                    "Las fechas deben ir en orden: inicio subida < fin subida <= inicio votación < fin votación "
+                            + "< fin jurado <= publicación de resultados");
         }
-        cargar().cambiarFechas(f.inicioSubida(), f.finSubida(), f.inicioVotacion(), f.finVotacion());
+        cargar().cambiarFechas(f.inicioSubida(), f.finSubida(), f.inicioVotacion(), f.finVotacion(),
+                f.finJurado(), f.publicacionResultados());
         return estado();
     }
 
@@ -79,6 +83,12 @@ public class FaseService {
         if (ahora.isBefore(c.getFinVotacion())) {
             return Fase.VOTACION;
         }
-        return Fase.CERRADO;
+        if (ahora.isBefore(c.getFinJurado())) {
+            return Fase.DECISION_JURADO;
+        }
+        if (ahora.isBefore(c.getPublicacionResultados())) {
+            return Fase.ESPERA_RESULTADOS;
+        }
+        return Fase.RESULTADOS;
     }
 }

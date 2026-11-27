@@ -47,7 +47,7 @@ public class ManejadorErrores {
                 .body(new ErrorRespuesta("JSON_INVALIDO", "El cuerpo de la petición no es un JSON válido"));
     }
 
-    /** Un parámetro de la URL con un valor que no vale, p. ej. /api/ranking?categoria=NOEXISTE */
+    /** Un parámetro de la URL con un valor que no vale, p. ej. /api/admin/jerseys?estado=NOEXISTE */
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)
     public ResponseEntity<ErrorRespuesta> parametroInvalido(MethodArgumentTypeMismatchException e) {
         return ResponseEntity.badRequest()

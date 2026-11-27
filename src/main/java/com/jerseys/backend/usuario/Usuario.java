@@ -36,7 +36,7 @@ public class Usuario {
     @Column(name = "password_hash", nullable = false)
     private String passwordHash;
 
-    @Enumerated(EnumType.STRING) // se guarda como texto: 'USUARIO', 'PROFESOR', 'ADMIN'
+    @Enumerated(EnumType.STRING) // se guarda como texto: 'USUARIO', 'JURADO', 'ADMIN'
     @Column(nullable = false)
     private Rol rol = Rol.USUARIO;
 
