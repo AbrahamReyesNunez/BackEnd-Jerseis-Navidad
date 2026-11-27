@@ -538,7 +538,7 @@ Tarda unos 3-5 minutos. Recomendación: en GitHub, **Settings → Branches → A
 
 Ejemplo: "los jerseys tienen un título".
 
-1. **BD:** crea `V2__titulo_jersey.sql` con `ALTER TABLE jerseys ADD COLUMN titulo VARCHAR(60);`
+1. **BD:** crea la siguiente migración (mira el número más alto en `src/main/resources/db/migration/`; ahora es `V9`, así que tocaría `V10__titulo_jersey.sql`) con `ALTER TABLE jerseys ADD COLUMN titulo VARCHAR(60);`
 2. **Entidad:** añade el campo `titulo` a `Jersey.java` con su `@Column`.
 3. **DTO:** añádelo a los `record` de `JerseyDtos` donde deba entrar o salir.
 4. **Servicio:** aplica las reglas (longitud, palabras prohibidas…).
@@ -550,7 +550,7 @@ Ejemplo: "los jerseys tienen un título".
 
 ## 9. Normas del equipo
 
-- **Git:** cada tarea en su rama (`feature/detector-caras`). Nada entra en `main` sin un Pull Request revisado por otra persona y con los tests en verde.
+- **Git:** cada tarea en su rama (`feature/...`, `fix/...`, `docs/...` o `test/...`). Nada entra en `main` sin un Pull Request con los tests de GitHub en verde y revisado por el líder del backend, que es quien lo fusiona. El paso a paso, con los comandos, está en el documento "Cómo trabajar con el repositorio del backend".
 - **Flyway:** nunca modifiques una migración ya aplicada. Crea una nueva.
 - **Secretos:** nunca en el código ni en Git. Van en variables de entorno (ver `.env.example`).
 - **Errores:** lanza `ApiException` con un código en MAYÚSCULAS y un mensaje claro para el usuario. Nada de `try/catch` en los controladores.
