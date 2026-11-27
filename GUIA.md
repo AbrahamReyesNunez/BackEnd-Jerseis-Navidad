@@ -7,19 +7,19 @@ Esta guía explica **cómo funciona el backend** y **cómo trabajar en él**. L�
 ## 1. Las piezas y cómo se conectan
 
 ```
- ┌────────────┐   HTTPS    ┌─────────┐   /         ┌──────────────────────┐
- │ Navegador  │ ─────────► │  Nginx  │ ──────────► │ Front (HTML/CSS/JS)  │
- │ (usuario)  │            │         │   /api/     ┌──────────────────────┐   JDBC   ┌────────────┐
- └────────────┘            │         │ ──────────► │ Spring Boot (Java)   │ ───────► │ PostgreSQL │
-                           │         │   /imagenes/└──────────────────────┘          └────────────┘
-                           │         │ ──────────►  Fotos (carpeta del FTP) ◄── el backend sube por FTP
-                           └─────────┘
+ ┌────────────┐  HTTPS  ┌─────────────────────┐   /           ┌──────────────────────┐
+ │ Navegador  │ ──────► │ Cloudflare (túnel)  │ ────────────► │ Front (HTML/CSS/JS)  │
+ │ (usuario)  │         │                     │   /api/       ┌──────────────────────┐  JDBC  ┌────────────┐
+ └────────────┘         │                     │ ────────────► │ Spring Boot (Java)   │ ─────► │ PostgreSQL │
+                        │                     │   /imagenes/  │  + carpeta de fotos  │        └────────────┘
+                        │                     │ ────────────► └──────────────────────┘
+                        └─────────────────────┘
 ```
 
 - **El front** son archivos estáticos: HTML, CSS y JS. El navegador los descarga y los ejecuta. El front **no** toca la base de datos: le pide todo al backend.
 - **El backend** (este proyecto) es un programa Java que está siempre encendido, escuchando peticiones HTTP en el puerto 8080. Aplica las reglas del concurso y es **el único** que habla con la base de datos.
 - **La base de datos** (PostgreSQL) guarda usuarios, jerseys, votos y fechas.
-- **Nginx** (lo monta ASIR) es la puerta de entrada: reparte cada petición según su ruta.
+- **El túnel de Cloudflare** (lo monta ASIR) es la puerta de entrada: pone el HTTPS y reparte cada petición según su ruta. Las fotos las guarda y las sirve el propio backend. Detalles en la sección 11.
 
 > **Idea clave:** el front es "la cara" y el backend es "el cerebro". Todo lo que el usuario ve y toca es del front. Todo lo que hay que **comprobar** o **guardar** es del backend, aunque el front ya lo haya comprobado. Cualquiera puede saltarse el front y llamar a la API directamente con Postman.
 
@@ -268,7 +268,7 @@ La decisión del jurado empieza justo cuando acaba la votación (`finVotacion`).
 
 ### El contrato de la API: Swagger
 
-Con el backend arrancado, abre **http://localhost:8080/swagger-ui.html**. Ahí están **todas las rutas**, qué JSON esperan y qué devuelven, y puedes probarlas desde el navegador:
+Con el backend arrancado **en tu ordenador** (perfil `dev`), abre **http://localhost:8080/swagger-ui.html**. En producción está apagado (`SWAGGER_ACTIVADO=false`), para que nadie de fuera vea la lista de la API. Ahí están **todas las rutas**, qué JSON esperan y qué devuelven, y puedes probarlas desde el navegador:
 
 1. Ejecuta `POST /api/auth/login` y copia el `token` de la respuesta.
 2. Pulsa el botón **Authorize** (arriba a la derecha) y pega el token.
@@ -278,7 +278,7 @@ Pasadle este enlace al grupo del front: es la documentación oficial y siempre e
 
 ### CORS (solo en desarrollo)
 
-Por seguridad, el navegador bloquea que una página de `localhost:5500` (Live Server) llame a `localhost:8080`, porque son **orígenes distintos**. El perfil `dev` ya permite esos dos orígenes. En producción no hace falta: Nginx sirve el front y la API en el mismo dominio.
+Por seguridad, el navegador bloquea que una página de `localhost:5500` (Live Server) llame a `localhost:8080`, porque son **orígenes distintos**. El perfil `dev` ya permite esos dos orígenes. En producción no hace falta: el front y la API van en el mismo dominio (sección 11).
 
 ---
 
@@ -565,9 +565,9 @@ Ejemplo: "los jerseys tienen un título".
 | ~~Bloquear correos temporales~~ ✅ | `auth/DetectorCorreoTemporal` | Hecho. Lista en `resources/correos-temporales.txt`; error `EMAIL_TEMPORAL` (400) |
 | ~~Límite de peticiones por IP~~ ✅ | `seguridad/LimitadorPeticiones` | Hecho. Login, registro y reenvío del correo; error `DEMASIADAS_PETICIONES` (429). Límites en `app.limites.*` |
 | ~~Panel de sospechosos~~ ✅ | `admin/AnalizadorSospechosos` | Hecho. `GET /api/admin/sospechosos`: ráfagas de registros/votos por IP, mismo favorito y papeletas idénticas. Falta la pantalla en el front |
-| Almacén SFTP | nuevo `imagen/AlmacenSftp.java` | Si ASIR monta SFTP en vez de FTP |
+| ~~Almacén SFTP~~ | — | Ya no hace falta: en el VPS las fotos van en una carpeta local (sección 11) |
 | ~~Decidir el sistema de votación~~ ✅ | `voto/VotoService` | Hecho. Sistema 3-2-1 (migración `V2__votacion_3_2_1.sql`) |
-| Despliegue | con ASIR | Java 21, servicio systemd, variables de `.env.example` |
+| Despliegue | con ASIR | VPS + Docker + túnel de Cloudflare: ver sección 11 |
 
 ### Cambios respecto al documento de diseño
 
@@ -586,3 +586,79 @@ Ejemplo: "los jerseys tienen un título".
 - **Borrar la cuenta y cambiar la contraseña:** `POST /api/cuenta/borrar` y `POST /api/cuenta/cambiar-password` (ver "Mi cuenta" en la sección 2). La fila del usuario no se borra: se le quitan los datos personales y se marca `usuarios.borrada_en`, porque hay votos, jerseys y ganadores que apuntan a ella (migración `V8__borrar_cuenta_y_avisos.sql`). El admin ya no puede cambiar el rol ni desbloquear una cuenta borrada (`409 CUENTA_BORRADA`).
 - **Avisos por correo:** al empezar y cerrarse la votación, al publicar los ganadores y cuando un voto deja de contar (ver "Qué correos manda el backend"). Las fechas de envío se guardan en `configuracion` (V8).
 - **Solo mayores de 18:** la casilla del registro pasa de `mayorDe14` a `mayorDe18` ("Debes tener 18 años o más para participar"). En la BD, `mayor_14_confirmado` se sustituye por `mayor_18_confirmado`; las cuentas que ya existían quedan en `false`, porque confirmaron 14 y no 18 (migración V5).
+
+---
+
+## 11. Despliegue en el VPS (para ASIR)
+
+Según el plan de ASIR ("Documentación despliegue de servicios en VPS"): VPS de **Contabo** con Ubuntu, dominios en **IONOS** gestionados por **Cloudflare**, y entrada por un **túnel de Cloudflare** (`cloudflared`). Esta sección dice lo que el backend necesita en ese montaje.
+
+### Cómo llegan las peticiones
+
+```
+ Navegador ──HTTPS──► Cloudflare ──túnel──► cloudflared (en el VPS)
+                                              │  /api/*       → backend   127.0.0.1:8080
+                                              │  /imagenes/*  → backend   127.0.0.1:8080
+                                              │  todo lo demás → front    (servidor de archivos estáticos)
+```
+
+- **Front y API en el MISMO dominio** (`https://elhiloquenosune.es`). En Cloudflare, **Zero Trust → Networks → Tunnels → Public Hostname**: una entrada con *Path* `api/*` → `http://localhost:8080`, otra con `imagenes/*` → `http://localhost:8080`, y otra sin *Path* → el front. El orden importa: las que tienen *Path*, primero. Si se separan en dominios distintos, fallan las llamadas del front (CORS) y los enlaces de los correos.
+- **Un solo dominio principal.** `.com`, `.info` y `.store` tienen que **redirigir** a `elhiloquenosune.es` (Cloudflare → *Rules → Redirect Rules*). Si cada uno abriera la web, los enlaces de los correos y el CAPTCHA solo funcionarían en uno.
+- **IP real del visitante:** Cloudflare la manda en `X-Forwarded-For` y el backend ya la lee (`server.forward-headers-strategy=native`). No hay que configurar nada más, **siempre que el puerto 8080 no esté abierto a Internet** (ver Docker).
+
+### Docker: cuidado con los puertos
+
+> ⚠️ **Docker se salta el cortafuegos (UFW).** Si en el `docker-compose` se pone `ports: "8080:8080"`, el puerto queda abierto a todo Internet **aunque UFW lo bloquee**. Hay que publicarlo solo para el propio servidor: `"127.0.0.1:8080:8080"`. Lo mismo con PostgreSQL: **sin** `ports`, o `"127.0.0.1:5432:5432"`. (El `docker-compose.yml` de esta carpeta es para desarrollo, no para el VPS.)
+
+Con el túnel, UFW solo necesita **SSH**: el túnel sale del servidor hacia Cloudflare, no hace falta abrir el 80 ni el 443.
+
+- **Imagen:** `eclipse-temurin:21-jre` (Ubuntu). **No** una `alpine`: OpenCV (detección de caras y de fotos inapropiadas) no funciona en Alpine.
+- **Fotos:** `IMAGENES_ALMACEN=local` y `IMAGENES_DIRECTORIO=/datos/imagenes` montado como **volumen**. Si no es un volumen, las fotos se pierden al recrear el contenedor. El backend las sirve él mismo en `/imagenes/`.
+- **Base de datos:** PostgreSQL 17 con un volumen para sus datos. Basta con crear una base de datos vacía y un usuario: las tablas las crea el backend al arrancar (Flyway).
+- **Memoria:** con 8 GB hay de sobra. Se puede limitar Java a 1-2 GB con `JAVA_TOOL_OPTIONS=-Xmx1g`.
+- **Tests:** si se ejecutan dentro de un contenedor, **no como root**: el PostgreSQL de los tests se niega a arrancar como root.
+
+### Variables del `.env`
+
+Todas están explicadas en `.env.example`. Las que cambian con este montaje:
+
+| Variable | Valor |
+| --- | --- |
+| `URL_PUBLICA` | `https://elhiloquenosune.es` (sin `/` al final) |
+| `IMAGENES_ALMACEN` / `IMAGENES_DIRECTORIO` | `local` / `/datos/imagenes` (volumen) |
+| `TURNSTILE_SECRETO` | La clave secreta del widget. En Cloudflare → Turnstile, añadir `elhiloquenosune.es` a los *hostnames* del widget |
+| `MAIL_*` | El correo del centro (sección "Correo") |
+| `CORREO_PAUSA_MASIVOS` | Según el límite de correos por hora del correo del centro |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | El admin real (solo se usa la primera vez) |
+| `SWAGGER_ACTIVADO` | `false` (si no, cualquiera ve la lista de la API) |
+
+### Caché de Cloudflare y fotos retiradas
+
+Cloudflare guarda copias de las fotos para servirlas más rápido. El backend le dice que solo las guarde **5 minutos**, así que una foto que retira el admin deja de verse en ese tiempo. Si es urgente: Cloudflare → **Caching → Configuration → Purge Cache → Custom Purge** con la URL de la foto.
+
+### Copias de seguridad
+
+Además de las *snapshots* del VPS, una copia diaria de la base de datos durante el concurso (por ejemplo, con `cron`):
+
+```bash
+docker exec <contenedor-postgres> pg_dump -U jerseys jerseys | gzip > /copias/jerseys-$(date +%F).sql.gz
+```
+
+Y copia de la carpeta de fotos (`/datos/imagenes`).
+
+### Lista de comprobación del lanzamiento
+
+1. `https://elhiloquenosune.es` abre el front, y `.com`, `.info` y `.store` redirigen a él.
+2. `https://elhiloquenosune.es/api/fase` responde (JSON con `"fase"`).
+3. `https://elhiloquenosune.es/swagger-ui.html` **no** responde (404).
+4. Desde fuera del VPS, `http://<IP-del-VPS>:8080` y el puerto 5432 **no** responden.
+5. Entrar como admin y mandar el correo de prueba (`POST /api/admin/correo/prueba`): llega.
+6. Poner las 6 fechas (sección "Fases y calendario del concurso").
+7. Registrarse con una cuenta nueva: llega el correo, el enlace activa la cuenta y el CAPTCHA funciona.
+8. Subir una foto (se ve en `/imagenes/...`), y retirarla como admin.
+9. Nombrar al jurado antes del 13 de diciembre.
+
+### Pagos
+
+- **IONOS:** los dominios tienen **renovación automática**; el precio del primer año es de oferta. Si no se van a mantener, desactivar la renovación.
+- **Contabo:** pago mensual. Decidir quién lo paga y darlo de baja al acabar el concurso (y antes, hacer lo que se decida con los datos).

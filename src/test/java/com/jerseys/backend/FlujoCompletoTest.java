@@ -72,7 +72,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * Recorre el concurso de principio a fin: registro → verificación → login → subida
  * → votación → ranking → decisión del jurado → resultados, comprobando también que las reglas rechazan lo que deben.
  */
-@SpringBootTest
+@SpringBootTest(properties = "SWAGGER_ACTIVADO=true") // aquí sí: hay un test de Swagger
 @ActiveProfiles("test")
 @Import(BaseDeDatosDePrueba.class)
 class FlujoCompletoTest {
@@ -165,6 +165,12 @@ class FlujoCompletoTest {
                 .andExpect(jsonPath("$.imagenTraseraUrl").isNotEmpty())
                 .andReturn();
         long jerseyAna = ((Number) JsonPath.read(conDosFotos.getResponse().getContentAsString(), "$.id")).longValue();
+        // El backend sirve la foto, y Cloudflare y el navegador solo pueden guardarla 5 minutos
+        // (si el admin la retira, deja de verse enseguida)
+        String fotoAna = JsonPath.read(conDosFotos.getResponse().getContentAsString(), "$.imagenUrl");
+        mvc.perform(get(fotoAna))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Cache-Control", "max-age=300, public"));
         long jerseyCarla = subirJersey(carla);
         mvc.perform(get("/api/jerseys/mios").header("Authorization", "Bearer " + carla))
                 .andExpect(jsonPath("$.jerseys[0].imagenTraseraUrl").value(nullValue()));
