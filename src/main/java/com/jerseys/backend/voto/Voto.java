@@ -4,8 +4,6 @@ import com.jerseys.backend.jersey.Jersey;
 import com.jerseys.backend.usuario.Usuario;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -35,11 +33,6 @@ public class Voto {
     @Column(nullable = false)
     private int puntos;
 
-    /** POPULAR, o una de las categorías del jurado. Se guarda como texto ("POPULAR", "DIVERTIDO"...). */
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
-    private Categoria categoria;
-
     @Column(nullable = false)
     private Instant fecha;
 
@@ -59,11 +52,9 @@ public class Voto {
     protected Voto() {
     }
 
-    public Voto(Usuario usuario, Jersey jersey, Categoria categoria, int puntos, Instant fecha, String ipHash,
-                String userAgent) {
+    public Voto(Usuario usuario, Jersey jersey, int puntos, Instant fecha, String ipHash, String userAgent) {
         this.usuario = usuario;
         this.jersey = jersey;
-        this.categoria = categoria;
         this.puntos = puntos;
         this.fecha = fecha;
         this.ipHash = ipHash;
@@ -79,7 +70,6 @@ public class Voto {
     public Usuario getUsuario() { return usuario; }
     public Jersey getJersey() { return jersey; }
     public int getPuntos() { return puntos; }
-    public Categoria getCategoria() { return categoria; }
     public Instant getFecha() { return fecha; }
     public String getIpHash() { return ipHash; }
     public String getUserAgent() { return userAgent; }

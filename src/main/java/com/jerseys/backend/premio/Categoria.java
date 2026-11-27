@@ -1,9 +1,13 @@
-package com.jerseys.backend.voto;
+package com.jerseys.backend.premio;
 
 /**
- * Categorías de premio, según las bases del concurso (apartado 5).
- * POPULAR la vota todo el mundo; las otras cuatro, solo el JURADO.
- * Todas usan el mismo sistema de votación 3-2-1.
+ * Los 5 premios del concurso, según las bases (apartado 5).
+ * <ul>
+ *   <li>POPULAR: lo decide el voto popular 3-2-1 (vota todo el mundo, también el jurado).</li>
+ *   <li>Las otras cuatro: el jurado, reunido en persona, elige directamente el ganador de cada una.</li>
+ * </ul>
+ * Un jersey solo puede ganar UN premio: el ganador popular no puede ganar una categoría del jurado,
+ * ni un mismo jersey dos categorías del jurado.
  */
 public enum Categoria {
 
@@ -25,7 +29,7 @@ public enum Categoria {
 
     public String descripcion() { return descripcion; }
 
-    /** true para las cuatro categorías que vota solo el jurado. */
+    /** true para las cuatro categorías que decide el jurado. */
     public boolean esDelJurado() {
         return this != POPULAR;
     }

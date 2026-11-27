@@ -42,12 +42,14 @@ public class SeguridadConfig {
                         .requestMatchers("/api/auth/registro", "/api/auth/login",
                                 "/api/auth/verificar", "/api/auth/reenviar-verificacion").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/fase").permitAll()
+                        // Los ganadores, cuando ya se han publicado (antes, 403 FASE_INCORRECTA)
+                        .requestMatchers(HttpMethod.GET, "/api/resultados").permitAll()
                         .requestMatchers("/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs/**").permitAll()
                         // Fotos (en desarrollo las sirve Spring; en producción, Nginx)
                         .requestMatchers(HttpMethod.GET, "/imagenes/**").permitAll()
                         .requestMatchers("/error").permitAll()
                         // ----- Por rol -----
-                        .requestMatchers("/api/ranking/**").hasAnyRole("PROFESOR", "ADMIN")
+                        .requestMatchers("/api/ranking/**").hasRole("ADMIN")
                         .requestMatchers("/api/jurado/**").hasRole("JURADO")
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
                         // ----- Todo lo demás: basta con estar logueado -----

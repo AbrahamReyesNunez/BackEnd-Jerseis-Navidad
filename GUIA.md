@@ -71,7 +71,7 @@ if (!respuesta.ok) {
   alert(datos.mensaje);              // p. ej. "Email o contraseña incorrectos"
 } else {
   sessionStorage.setItem("token", datos.token);
-  sessionStorage.setItem("rol", datos.usuario.rol);   // USUARIO | PROFESOR | ADMIN
+  sessionStorage.setItem("rol", datos.usuario.rol);   // USUARIO | JURADO | ADMIN
 }
 ```
 
@@ -138,22 +138,71 @@ await fetch("/api/votos", {
 });
 ```
 
-**Jurado** (solo rol `JURADO`). Además del voto popular de arriba, vota en 4 categorías, **una petición por categoría**:
+**Jurado** (solo rol `JURADO`). Votan en el voto popular de arriba como todo el mundo. Después, en la fase `DECISION_JURADO`, se reúnen **en persona**, lo hablan y uno de ellos marca en la web el ganador de cada una de las 4 categorías:
 
 ```js
-// Qué categorías hay y en cuáles ha votado ya: [{ categoria, nombre, descripcion, votado, votos }]
-const categorias = await (await fetch("/api/jurado/categorias", { headers: { Authorization: "Bearer " + token } })).json();
+const h = { "Content-Type": "application/json", Authorization: "Bearer " + token };
 
-await fetch("/api/jurado/votos", {
-  method: "POST",
-  headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
-  body: JSON.stringify({ categoria: "DIVERTIDO", votos: [   // DIVERTIDO | ORIGINAL | NAVIDENO | EXTRAVAGANTE
-    { jerseyId: 12, puntos: 3 }, { jerseyId: 3, puntos: 2 }, { jerseyId: 7, puntos: 1 },
-  ]}),
+// Las 4 categorías y el ganador elegido en cada una (ganador: null si aún no):
+// [{ categoria: "DIVERTIDO", nombre: "El más divertido", descripcion, ganador: { id, imagenUrl, ... } | null }, ...]
+const categorias = await (await fetch("/api/jurado/categorias", { headers: h })).json();
+
+// Los jerseys entre los que elegir. El ganador del voto popular NO sale (un jersey, un premio).
+// [{ id, imagenUrl, imagenTraseraUrl, esPropio, ganadorDe }]
+//   esPropio: true  → es el tuyo: no puedes marcarlo tú (que lo marque otro del jurado)
+//   ganadorDe: "ORIGINAL" → ya ha ganado esa categoría y no puede ganar otra (grísalo); null si ninguna
+const jerseys = await (await fetch("/api/jurado/jerseys", { headers: h })).json();
+
+// Marcar el ganador de una categoría (si ya había uno, lo sustituye)
+await fetch("/api/jurado/ganadores/DIVERTIDO", {   // DIVERTIDO | ORIGINAL | NAVIDENO | EXTRAVAGANTE
+  method: "PUT", headers: h, body: JSON.stringify({ jerseyId: 12 }),
 });
+
+// Quitar el ganador de una categoría (por si se equivocan y quieren ese jersey para otra)
+await fetch("/api/jurado/ganadores/DIVERTIDO", { method: "DELETE", headers: h });
 ```
 
-El admin ve el resultado de cada categoría en `GET /api/ranking?categoria=DIVERTIDO` (sin parámetro, el popular).
+Errores posibles al marcar: `YA_TIENE_PREMIO` (409, ya ganó el popular u otra categoría), `JERSEY_PROPIO` (400), `FASE_INCORRECTA` (403, fuera de la fase del jurado).
+
+**Resultados** (públicos, sin iniciar sesión, desde que empieza la fase `RESULTADOS`; antes, `403 FASE_INCORRECTA`). Solo dicen quién ha ganado, nunca los puntos:
+
+```js
+const { premios } = await (await fetch("/api/resultados")).json();
+// premios[0] es el popular y luego las 4 del jurado:
+// [{ categoria: "POPULAR", nombre: "El favorito del público", descripcion,
+//    ganador: { jerseyId, imagenUrl, imagenTraseraUrl, autor } | null }, ...]   (null = premio desierto)
+```
+
+El admin puede verlos antes de publicarlos en `GET /api/admin/resultados`, y el ranking con los puntos en `GET /api/ranking` (solo él).
+
+### Fases y calendario del concurso
+
+`GET /api/fase` (público) dice en qué fase estamos, para que el front sepa qué pantalla enseñar. Todas las horas son las **12:00 del mediodía, hora de España**:
+
+| Fase | Desde | Hasta | Qué se puede hacer |
+| --- | --- | --- | --- |
+| `PREPARACION` | — | 6 dic | Registrarse |
+| `SUBIDA` | 6 dic | 10 dic | Subir el jersey. El admin puede retirar fotos |
+| `ESPERA` | — | — | Solo si se deja hueco entre subida y votación (este año no) |
+| `VOTACION` | 10 dic | 13 dic | Voto popular (también el jurado). El admin puede anular votos |
+| `DECISION_JURADO` | 13 dic | 14 dic | El jurado marca el ganador de cada categoría |
+| `ESPERA_RESULTADOS` | 14 dic | 16 dic | Nada: todo decidido, sin publicar |
+| `RESULTADOS` | 16 dic | — | `GET /api/resultados` para todos |
+
+El admin las fija con `PUT /api/admin/configuracion`. Las fechas van **en UTC** (la `Z` del final), y en diciembre España va una hora por delante, así que **las 12:00 de España son las `11:00Z`**:
+
+```json
+{
+  "inicioSubida":          "2026-12-06T11:00:00Z",
+  "finSubida":             "2026-12-10T11:00:00Z",
+  "inicioVotacion":        "2026-12-10T11:00:00Z",
+  "finVotacion":           "2026-12-13T11:00:00Z",
+  "finJurado":             "2026-12-14T11:00:00Z",
+  "publicacionResultados": "2026-12-16T11:00:00Z"
+}
+```
+
+La decisión del jurado empieza justo cuando acaba la votación (`finVotacion`). **Ojo, admin:** los votos fraudulentos hay que anularlos **antes** de que acabe la votación. Después ya no se puede, porque cambiaría el ganador popular mientras el jurado está eligiendo sin contar con él.
 
 ### El contrato de la API: Swagger
 
@@ -188,7 +237,7 @@ SeguridadConfig ...... ¿esta ruta es pública? ¿necesita login? ¿necesita un 
 VotoController ....... convierte el JSON en un objeto Java y lo valida (@Valid)
    │
    ▼
-VotoService .......... aplica las REGLAS: fase correcta, no votarse, puntos 6..1...
+VotoService .......... aplica las REGLAS: fase correcta, no votarse, puntos 3-2-1...
    │
    ▼
 VotoRepository ....... guarda en la base de datos
@@ -257,9 +306,9 @@ Un método marcado con `@Transactional` es **todo o nada**: si falla a mitad, se
 - **JWT:** al hacer login, el backend devuelve un token firmado con una clave secreta. El front lo manda en cada petición (`Authorization: Bearer …`). Si alguien modifica el token, la firma deja de cuadrar y se rechaza. Caduca a las 12 horas.
 - **Roles:** las reglas están en `SeguridadConfig`:
   - `/api/admin/**` → solo `ADMIN`
-  - `/api/ranking` → `PROFESOR` o `ADMIN` (el jurado no, para que no le influyan los resultados)
+  - `/api/ranking` → solo `ADMIN`: es el único que ve los votos y los puntos
   - `/api/jurado/**` → solo `JURADO`
-  - el resto de `/api/**` → cualquier usuario logueado, salvo las rutas públicas (registro, login, fase).
+  - el resto de `/api/**` → cualquier usuario logueado, salvo las rutas públicas (registro, login, fase y resultados).
 - **IPs:** se guardan como HMAC (un hash con clave secreta), no en claro.
 - **Secretos:** las claves y contraseñas van en **variables de entorno**, nunca en el código ni en Git.
 
@@ -276,8 +325,9 @@ src/main/java/com/jerseys/backend/
 ├── fase/        fechas del concurso y cálculo de la fase actual
 ├── jersey/      subir jersey, listar, eliminar
 ├── imagen/      procesar fotos, validadores (caras, NSFW), almacén local/FTP
-├── voto/        votar y reglas de votación
-├── ranking/     clasificación (solo profesores y admin)
+├── voto/        voto popular 3-2-1 y sus reglas
+├── ranking/     clasificación del voto popular con puntos (solo admin)
+├── premio/      categorías, ganadores que elige el jurado y resultados
 ├── admin/       panel de administración
 ├── correo/      envío de correos
 ├── comun/       errores, hash, utilidades compartidas
@@ -323,8 +373,8 @@ La primera vez tarda un poco (descarga las dependencias). Cuando veas `Started J
 
 1. `POST /api/auth/registro` con tu email.
 2. En desarrollo el correo **no se envía** (salvo que configures uno, ver "Correo" más abajo): aparece en la **consola** del backend. Copia el enlace y ábrelo en el navegador para verificar la cuenta. Te redirigirá a `/verificacion.html`, que dará 404 hasta que el front haga esa página, pero la cuenta ya queda activada.
-3. Entra como admin y fija las fechas con `PUT /api/admin/configuracion` (por ejemplo, subida abierta ahora).
-4. Entra con tu usuario, sube una foto, cambia las fechas para abrir la votación, vota…
+3. Entra como admin y fija las fechas con `PUT /api/admin/configuracion` (las 6; por ejemplo, subida abierta ahora). Ver "Fases y calendario del concurso".
+4. Entra con tu usuario, sube una foto, cambia las fechas para abrir la votación, vota… y luego la fase del jurado y los resultados.
 
 ### Correo
 
@@ -434,10 +484,12 @@ Ejemplo: "los jerseys tienen un título".
 
 - **Verificación de email:** `GET /api/auth/verificar?token=…` activa la cuenta y **redirige** a `/verificacion.html?resultado=ok|caducado|invalido`. El front debe crear esa página.
 - **Eliminar jersey:** es `POST /api/admin/jerseys/{id}/eliminar` con `{"motivo": "…"}` (no `DELETE`), porque lleva un cuerpo con el motivo.
-- **Fase `PREPARACION`:** nueva, para antes de que empiece la subida o mientras el admin no ha puesto fechas.
+- **Fases nuevas:** `PREPARACION` (antes de que empiece la subida o mientras el admin no ha puesto fechas), `DECISION_JURADO`, `ESPERA_RESULTADOS` y `RESULTADOS` (sustituye a `CERRADO`). Calendario: subida del 6 al 10 de diciembre, votación del 10 al 13, jurado del 13 al 14 y resultados el 16, siempre a las 12:00. Dos fechas nuevas en la configuración: `finJurado` y `publicacionResultados` (migración `V6__jurado_elige_ganadores.sql`).
 - **Sistema de votación 3-2-1:** cada usuario da 3 puntos a un jersey, 2 a otro y 1 a otro (antes era 6-5-4-3-2-1). Desempate en el ranking: más votos de 3, luego de 2, luego de 1.
 - **Sin mínimo de participantes:** si hay menos de 3 jerseys ajenos, se reparten solo las puntuaciones más altas (con 2 jerseys: 3 y 2; con 1: solo el 3).
 - **Un jersey por persona** (se probó con 3 y al final se quedó en 1; cada jersey con una o dos fotos). Los eliminados por el admin no cuentan: si te retiran el tuyo, puedes subir otro. Si ya tienes uno: `409 LIMITE_DE_JERSEYS`. El límite es `JerseyService.MAX_JERSEYS_POR_USUARIO`. `GET /api/jerseys/mios` devuelve `{ maximo, activos, jerseys: [...] }`: el activo y los eliminados, con su motivo (lista vacía si no hay ninguno). La migración `V3__tres_jerseys_por_usuario.sql` quitó el índice único de la BD; ahora el límite lo controla `JerseyService`, que bloquea al usuario mientras sube para que un doble clic no cuele dos.
-- **Rol `JURADO` y 5 categorías de premio** (bases, apartado 5). `POPULAR` la vota todo el mundo, también el jurado, con el mismo peso. `DIVERTIDO`, `ORIGINAL`, `NAVIDENO` y `EXTRAVAGANTE` solo las vota el jurado, con el mismo sistema 3-2-1 y las mismas reglas, una vez por categoría (`/api/jurado/**`). El admin nombra jurado con `PATCH /api/admin/usuarios/{id}/rol` `{"rol":"JURADO"}`. Cada voto guarda su `categoria` (migración `V4__jurado_y_categorias.sql`). Ranking por categoría: `GET /api/ranking?categoria=...`. El panel de sospechosos solo analiza el voto popular.
+- **Rol `JURADO` y 5 premios** (bases, apartado 5). `POPULAR` lo decide el voto popular, en el que el jurado vota como uno más. `DIVERTIDO`, `ORIGINAL`, `NAVIDENO` y `EXTRAVAGANTE` los decide el jurado reunido en persona: no votan con puntos, marcan directamente el ganador de cada categoría (`/api/jurado/**`, ver "Jurado" en la sección 2). Al principio el jurado votaba 3-2-1 en cada categoría (migración V4); se cambió en V6, que borra esos votos y la columna `votos.categoria` y crea la tabla `ganadores_categoria`. El admin nombra jurado con `PATCH /api/admin/usuarios/{id}/rol` `{"rol":"JURADO"}`.
+- **Un jersey, un premio:** el ganador popular no aparece para el jurado y un jersey no puede ganar dos categorías (`409 YA_TIENE_PREMIO`; la BD también lo impide con `UNIQUE (jersey_id)`). Quien marca no puede elegir su propio jersey (`JERSEY_PROPIO`).
+- **Sin rol `PROFESOR`:** solo el `ADMIN` ve los votos y el ranking. Los que fueran profesores pasan a `USUARIO` (migración V6). Los ganadores, sin puntos, se publican para todos en `GET /api/resultados` a partir del 16.
 - **Dos fotos por jersey:** delante (`foto`, obligatoria) y detrás (`fotoTrasera`, opcional). Las dos pasan las mismas comprobaciones (formato, caras, contenido inapropiado); si una falla no se guarda ninguna. Las respuestas traen `imagenTraseraUrl` (`null` si no hay). Columna `jerseys.imagen_trasera_nombre` (migración `V5__foto_trasera_y_mayor_18.sql`).
 - **Solo mayores de 18:** la casilla del registro pasa de `mayorDe14` a `mayorDe18` ("Debes tener 18 años o más para participar"). En la BD, `mayor_14_confirmado` se sustituye por `mayor_18_confirmado`; las cuentas que ya existían quedan en `false`, porque confirmaron 14 y no 18 (migración V5).

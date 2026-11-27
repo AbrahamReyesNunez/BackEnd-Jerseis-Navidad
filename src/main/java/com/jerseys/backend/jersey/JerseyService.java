@@ -133,7 +133,9 @@ public class JerseyService {
      */
     @Transactional(readOnly = true)
     public List<JerseyVotableResponse> listarParaVotar(Long usuarioId) {
-        fases.exigir("ver los jerseys a votar", Fase.VOTACION, Fase.CERRADO);
+        // Después de la votación se pueden seguir viendo (como galería), pero ya no votar
+        fases.exigir("ver los jerseys a votar", Fase.VOTACION, Fase.DECISION_JURADO, Fase.ESPERA_RESULTADOS,
+                Fase.RESULTADOS);
         List<JerseyVotableResponse> lista = new ArrayList<>(
                 jerseys.findByEstadoOrderByFechaSubidaAsc(EstadoJersey.APROBADO).stream()
                         .map(j -> new JerseyVotableResponse(j.getId(), url(j), urlTrasera(j), j.esDe(usuarioId)))

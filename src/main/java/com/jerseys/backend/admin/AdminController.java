@@ -13,6 +13,8 @@ import com.jerseys.backend.jersey.EstadoJersey;
 import com.jerseys.backend.jersey.JerseyDtos.EliminarJerseyRequest;
 import com.jerseys.backend.jersey.JerseyDtos.JerseyAdminResponse;
 import com.jerseys.backend.jersey.JerseyService;
+import com.jerseys.backend.premio.PremioDtos.ResultadosResponse;
+import com.jerseys.backend.premio.ResultadosService;
 import com.jerseys.backend.seguridad.UsuarioActual;
 import com.jerseys.backend.voto.VotoDtos.VotoAdminResponse;
 import com.jerseys.backend.voto.VotoService;
@@ -46,16 +48,19 @@ public class AdminController {
     private final FaseService faseService;
     private final PanelSospechososService panelSospechosos;
     private final CorreoService correo;
+    private final ResultadosService resultados;
 
     public AdminController(AdminUsuariosService adminUsuarios, JerseyService jerseyService,
                            VotoService votoService, FaseService faseService,
-                           PanelSospechososService panelSospechosos, CorreoService correo) {
+                           PanelSospechososService panelSospechosos, CorreoService correo,
+                           ResultadosService resultados) {
         this.adminUsuarios = adminUsuarios;
         this.jerseyService = jerseyService;
         this.votoService = votoService;
         this.faseService = faseService;
         this.panelSospechosos = panelSospechosos;
         this.correo = correo;
+        this.resultados = resultados;
     }
 
     // ----- Correo -----
@@ -79,7 +84,7 @@ public class AdminController {
     }
 
     @PatchMapping("/usuarios/{id}/rol")
-    @Operation(summary = "Cambia el rol (p. ej. hacer PROFESOR)")
+    @Operation(summary = "Cambia el rol (p. ej. {\"rol\":\"JURADO\"} para nombrar a alguien del jurado)")
     public UsuarioAdminResponse cambiarRol(@AuthenticationPrincipal UsuarioActual yo, @PathVariable Long id,
                                            @Valid @RequestBody CambiarRolRequest peticion) {
         return adminUsuarios.cambiarRol(yo.id(), id, peticion.rol());
@@ -117,7 +122,8 @@ public class AdminController {
 
     @PatchMapping("/votos/{id}/anular")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    @Operation(summary = "Anula un voto fraudulento (deja de contar en el ranking)")
+    @Operation(summary = "Anula un voto fraudulento (deja de contar en el ranking). Solo durante la votación: "
+            + "después el jurado ya está eligiendo sin contar el ganador popular")
     public void anularVoto(@AuthenticationPrincipal UsuarioActual yo, @PathVariable Long id) {
         votoService.anular(yo.id(), id);
     }
@@ -131,6 +137,15 @@ public class AdminController {
         return panelSospechosos.analizar();
     }
 
+    // ----- Resultados -----
+
+    @GetMapping("/resultados")
+    @Operation(summary = "Los ganadores de los 5 premios tal y como están ahora, en cualquier fase "
+            + "(para revisarlos antes de que se publiquen en /api/resultados)")
+    public ResultadosResponse resultados() {
+        return resultados.calcular();
+    }
+
     // ----- Fechas del concurso -----
 
     @GetMapping("/configuracion")
@@ -140,7 +155,8 @@ public class AdminController {
     }
 
     @PutMapping("/configuracion")
-    @Operation(summary = "Cambia las fechas de las fases (formato ISO, p. ej. 2026-12-01T08:00:00Z)")
+    @Operation(summary = "Cambia las fechas de las fases (formato ISO en UTC, p. ej. 2026-12-06T11:00:00Z = "
+            + "6 de diciembre a las 12:00 en España). La decisión del jurado va de finVotacion a finJurado")
     public FaseResponse cambiarConfiguracion(@Valid @RequestBody CambiarFechasRequest peticion) {
         return faseService.cambiarFechas(peticion);
     }

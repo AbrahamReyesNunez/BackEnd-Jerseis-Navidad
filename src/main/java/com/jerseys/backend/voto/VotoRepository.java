@@ -7,23 +7,22 @@ import java.util.List;
 
 public interface VotoRepository extends JpaRepository<Voto, Long> {
 
-    /** ¿Ha votado ya este usuario en esta categoría? */
-    boolean existsByUsuarioIdAndCategoria(Long usuarioId, Categoria categoria);
+    /** ¿Ha votado ya este usuario? */
+    boolean existsByUsuarioId(Long usuarioId);
 
-    /** Los votos de un usuario en una categoría, de más a menos puntos. */
-    List<Voto> findByUsuarioIdAndCategoriaOrderByPuntosDesc(Long usuarioId, Categoria categoria);
+    /** Los votos de un usuario, de más a menos puntos. */
+    List<Voto> findByUsuarioIdOrderByPuntosDesc(Long usuarioId);
 
-    /** Votos válidos de una categoría, con su jersey y el autor del jersey cargados (para el ranking). */
+    /** Votos válidos, con su jersey y el autor del jersey cargados (para el ranking). */
     @Query("""
             SELECT v FROM Voto v
             JOIN FETCH v.jersey j
             JOIN FETCH j.usuario
-            WHERE v.categoria = :categoria
-              AND v.anulado = false AND j.estado = com.jerseys.backend.jersey.EstadoJersey.APROBADO
+            WHERE v.anulado = false AND j.estado = com.jerseys.backend.jersey.EstadoJersey.APROBADO
             """)
-    List<Voto> findValidosParaRanking(Categoria categoria);
+    List<Voto> findValidosParaRanking();
 
-    /** Para el panel del admin: votos (de todas las categorías) con su votante y su jersey. */
+    /** Para el panel del admin: todos los votos con su votante y su jersey. */
     @Query("""
             SELECT v FROM Voto v
             JOIN FETCH v.usuario
